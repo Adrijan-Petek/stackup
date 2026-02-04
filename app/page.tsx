@@ -2,12 +2,6 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
-import {
-  openContractCall,
-  connect,
-  disconnect,
-  request,
-} from "@stacks/connect";
 import { STACKS_TESTNET } from "@stacks/network";
 import {
   cvToValue,
@@ -21,6 +15,8 @@ const APP_ICON_PATH = "/icons/icon.png";
 
 const CONTRACT_ADDRESS = "ST2022VXQ3E384AAHQ15KFFXVN3CY5G57HX3W1GBJ";
 const CONTRACT_NAME = "streak";
+
+export const dynamic = "force-dynamic";
 
 export default function Home() {
   const [walletAddress, setWalletAddress] = useState<string>("");
@@ -62,6 +58,7 @@ export default function Home() {
     setError("");
     setStatus("Opening wallet...");
     try {
+      const { connect, request } = await import("@stacks/connect");
       const result = await connect({ network: "testnet" });
       let nextAddress =
         result.addresses?.find((entry) => entry.address.startsWith("ST"))
@@ -82,7 +79,8 @@ export default function Home() {
     }
   };
 
-  const disconnectWallet = () => {
+  const disconnectWallet = async () => {
+    const { disconnect } = await import("@stacks/connect");
     disconnect();
     setWalletAddress("");
     setStatus("Not connected");
@@ -155,11 +153,12 @@ export default function Home() {
     }
   }, [address, fetchOnChain]);
 
-  const claimStreak = () => {
+  const claimStreak = async () => {
     setError("");
     setStatus("Submitting claim...");
 
     try {
+      const { openContractCall } = await import("@stacks/connect");
       openContractCall({
         contractAddress: CONTRACT_ADDRESS,
         contractName: CONTRACT_NAME,
