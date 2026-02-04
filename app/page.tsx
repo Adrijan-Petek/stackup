@@ -1,9 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import * as StacksConnect from "@stacks/connect";
-import { STACKS_MAINNET } from "@stacks/network";
+import { useCallback, useEffect, useState } from "react";
+import {
+  openContractCall,
+  connect,
+  disconnect,
+  request,
+} from "@stacks/connect";
+import { STACKS_TESTNET } from "@stacks/network";
 import {
   cvToValue,
   fetchCallReadOnlyFunction,
@@ -14,44 +19,11 @@ import styles from "./page.module.css";
 const APP_NAME = "StackUp";
 const APP_ICON_PATH = "/icons/icon.png";
 
-// TODO: replace with your deployed contract details before mainnet launch.
-const CONTRACT_ADDRESS = "STXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+const CONTRACT_ADDRESS = "ST2022VXQ3E384AAHQ15KFFXVN3CY5G57HX3W1GBJ";
 const CONTRACT_NAME = "streak";
 
-type StxAddress = { mainnet?: string; testnet?: string };
-type UserProfile = { stxAddress?: StxAddress };
-type UserData = { profile?: UserProfile };
-
-type ConnectModule = typeof StacksConnect & {
-  showConnect?: (options: StacksConnect.AuthOptions) => void;
-  showBlockstackConnect?: (options: StacksConnect.AuthOptions) => void;
-  openContractCall?: (options: StacksConnect.ContractCallOptions) => void;
-  showContractCall?: (options: StacksConnect.ContractCallOptions) => void;
-  default?: {
-    showConnect?: (options: StacksConnect.AuthOptions) => void;
-    openContractCall?: (options: StacksConnect.ContractCallOptions) => void;
-  };
-};
-
 export default function Home() {
-  const connectModule = StacksConnect as ConnectModule;
-  const showConnectFn =
-    connectModule.showConnect ??
-    connectModule.showBlockstackConnect ??
-    connectModule.default?.showConnect;
-  const openContractCallFn =
-    connectModule.openContractCall ??
-    connectModule.showContractCall ??
-    connectModule.default?.openContractCall;
-
-  const userSession = useMemo(
-    () =>
-      new StacksConnect.UserSession({
-        appConfig: new StacksConnect.AppConfig(["store_write"]),
-      }),
-    []
-  );
-  const [userData, setUserData] = useState<UserData | null>(null);
+  const [walletAddress, setWalletAddress] = useState<string>("");
   const [status, setStatus] = useState<string>("Not connected");
   const [error, setError] = useState<string>("");
   const [lastTxId, setLastTxId] = useState<string>("");
@@ -66,64 +38,53 @@ export default function Home() {
   }, [theme]);
 
   useEffect(() => {
-    if (userSession.isUserSignedIn()) {
-      setUserData(userSession.loadUserData());
+    const storedAddress = localStorage.getItem("stackup_wallet_address");
+    if (storedAddress) {
+      setWalletAddress(storedAddress);
       setStatus("Wallet connected");
-      return;
     }
+  }, []);
 
-    if (userSession.isSignInPending()) {
-      userSession
-        .handlePendingSignIn()
-        .then((data) => {
-          setUserData(data);
-          setStatus("Wallet connected");
-        })
-        .catch(() => {
-          setError("Could not finish sign-in.");
-          setStatus("Not connected");
-        });
+  useEffect(() => {
+    if (walletAddress) {
+      localStorage.setItem("stackup_wallet_address", walletAddress);
+    } else {
+      localStorage.removeItem("stackup_wallet_address");
     }
-  }, [userSession]);
+  }, [walletAddress]);
 
-  const address =
-    userData?.profile?.stxAddress?.mainnet ??
-    userData?.profile?.stxAddress?.testnet ??
-    "";
+  const address = walletAddress;
   const shortAddress = address
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
     : "Not connected";
 
-  const connectWallet = () => {
+  const connectWallet = async () => {
     setError("");
     setStatus("Opening wallet...");
-    if (!showConnectFn) {
-      setError("Wallet connect is unavailable. Check @stacks/connect install.");
+    try {
+      let result = await connect({ network: "testnet" });
+      let nextAddress =
+        result.addresses?.find((entry) => entry.address.startsWith("ST"))
+          ?.address ?? "";
+      if (!nextAddress) {
+        const rpcResult = await request("stx_getAddresses", {
+          network: "testnet",
+        });
+        nextAddress =
+          rpcResult.addresses?.find((entry) => entry.address.startsWith("ST"))
+            ?.address ?? "";
+      }
+      setWalletAddress(nextAddress);
+      setStatus(nextAddress ? "Wallet connected" : "Connected");
+    } catch {
+      setError("Wallet connect failed.");
       setStatus("Not connected");
-      return;
     }
-    showConnectFn({
-      userSession,
-      appDetails: {
-        name: APP_NAME,
-        icon:
-          typeof window === "undefined"
-            ? APP_ICON_PATH
-            : new URL(APP_ICON_PATH, window.location.origin).toString(),
-      },
-      onFinish: () => {
-        setUserData(userSession.loadUserData());
-        setStatus("Wallet connected");
-      },
-      onCancel: () => {
-        setStatus("Connection cancelled");
-      },
-    });
   };
 
   const disconnectWallet = () => {
-    userSession.signUserOut(window.location.origin);
-    setUserData(null);
+    disconnect();
+    setWalletAddress("");
     setStatus("Not connected");
   };
 
@@ -145,7 +106,7 @@ export default function Home() {
           contractName: CONTRACT_NAME,
           functionName: "get-streak",
           functionArgs: [principalCV(sender)],
-          network: STACKS_MAINNET,
+          network: STACKS_TESTNET,
           senderAddress: sender,
         }),
         fetchCallReadOnlyFunction({
@@ -153,7 +114,7 @@ export default function Home() {
           contractName: CONTRACT_NAME,
           functionName: "get-last-claim-day",
           functionArgs: [principalCV(sender)],
-          network: STACKS_MAINNET,
+          network: STACKS_TESTNET,
           senderAddress: sender,
         }),
         fetchCallReadOnlyFunction({
@@ -161,7 +122,7 @@ export default function Home() {
           contractName: CONTRACT_NAME,
           functionName: "has-badge",
           functionArgs: [principalCV(sender)],
-          network: STACKS_MAINNET,
+          network: STACKS_TESTNET,
           senderAddress: sender,
         }),
       ]);
@@ -199,17 +160,12 @@ export default function Home() {
     setStatus("Submitting claim...");
 
     try {
-      if (!openContractCallFn) {
-        setError("Contract call is unavailable. Check @stacks/connect install.");
-        setStatus("Claim failed");
-        return;
-      }
-      openContractCallFn({
+      openContractCall({
         contractAddress: CONTRACT_ADDRESS,
         contractName: CONTRACT_NAME,
         functionName: "claim",
         functionArgs: [],
-        network: STACKS_MAINNET,
+        network: STACKS_TESTNET,
         appDetails: {
           name: APP_NAME,
           icon: new URL(APP_ICON_PATH, window.location.origin).toString(),
@@ -241,7 +197,7 @@ export default function Home() {
               height={140}
               sizes="(max-width: 720px) 160px, 200px"
               priority
-              style={{ width: "100%", height: "auto" }}
+              style={{ height: "auto" }}
             />
             <div className={styles.brandText}>Daily streaks on Stacks.</div>
           </div>
@@ -274,7 +230,7 @@ export default function Home() {
               <span> Claim daily.</span>
             </div>
             <p className={styles.lede}>
-              StackUp tracks your daily claim on Stacks mainnet. Claim once per
+              StackUp tracks your daily claim on Stacks testnet. Claim once per
               day to build momentum and unlock your 7-day NFT badge.
             </p>
             <div className={styles.heroActions}>
@@ -293,7 +249,7 @@ export default function Home() {
           <div className={styles.panel}>
             <div className={styles.panelHeader}>
               <h2>Wallet status</h2>
-              <span className={styles.pill}>Mainnet</span>
+              <span className={styles.pill}>Testnet</span>
             </div>
             <div className={styles.stack}>
               <div className={styles.status}>
@@ -336,8 +292,7 @@ export default function Home() {
                 </code>
               </div>
               <div className={styles.footnote}>
-                <span className={styles.warn}>Heads up:</span> the contract
-                address above is a placeholder. Update it after deployment.
+                Deployed on Stacks testnet via Hiro Platform.
               </div>
             </div>
           </div>

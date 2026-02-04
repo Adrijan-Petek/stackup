@@ -1,6 +1,6 @@
 .page {
   min-height: 100vh;
-  padding: 24px 24px 72px;
+  padding: 0px 24px 72px;
 }
 
 .shell {
@@ -28,8 +28,8 @@
 }
 
 .logo {
-  width: clamp(100px, 12vw, 160px);
-  height: clamp(40px, 6vw, 90px);
+  width: clamp(74px, 8.5vw, 100px);
+  height: clamp(30px, 4.4vw, 40px);
   object-fit: contain;
   display: block;
 }
