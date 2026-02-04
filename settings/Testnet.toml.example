@@ -4,4 +4,4 @@ node_rpc_address = "https://api.testnet.hiro.so"
 deployment_fee_rate = 10
 
 [accounts.deployer]
-mnemonic = "replace with your testnet mnemonic"
+mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
