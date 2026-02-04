@@ -16,8 +16,6 @@ const APP_ICON_PATH = "/icons/icon.png";
 const CONTRACT_ADDRESS = "ST2022VXQ3E384AAHQ15KFFXVN3CY5G57HX3W1GBJ";
 const CONTRACT_NAME = "streak";
 
-export const dynamic = "force-dynamic";
-
 export default function Home() {
   const [walletAddress, setWalletAddress] = useState<string>("");
   const [status, setStatus] = useState<string>("Not connected");
