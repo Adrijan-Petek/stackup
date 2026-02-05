@@ -95,8 +95,15 @@ export default function ClientPage() {
   };
 
   const fetchOnChain = useCallback(async () => {
-    if (!CONTRACT_ADDRESS.startsWith("ST")) {
-      setError("Set the contract address before fetching on-chain data.");
+    if (
+      !(
+        CONTRACT_ADDRESS.startsWith("ST") ||
+        CONTRACT_ADDRESS.startsWith("SP")
+      )
+    ) {
+      setError(
+        "Set a valid contract address before fetching on-chain data (ST... or SP...)."
+      );
       return;
     }
 
