@@ -1,5 +1,6 @@
 # StackUp
 
+
 StackUp is a Stacks mainnet daily streak app. Users connect a Stacks wallet, claim once per day, and unlock NFT badge milestones on-chain.
 
 ## Features
