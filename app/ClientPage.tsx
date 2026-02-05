@@ -3,21 +3,36 @@
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import { connect, disconnect, openContractCall, request } from "@stacks/connect";
-import { STACKS_MAINNET } from "@stacks/network";
+import { STACKS_MAINNET, STACKS_TESTNET } from "@stacks/network";
 import {
   cvToValue,
   fetchCallReadOnlyFunction,
   principalCV,
+  uintCV,
 } from "@stacks/transactions";
 import styles from "./page.module.css";
 
 const APP_NAME = "StackUp";
 const APP_ICON_PATH = "/icons/icon.png";
 
-const CONTRACT_ADDRESS = "SP2022VXQ3E384AAHQ15KFFXVN3CY5G57HWCCQX23";
-const CONTRACT_NAME = "streak";
-const WALLET_NETWORK = "mainnet" as const;
-const ADDRESS_PREFIX = "SP";
+const CONTRACT_ADDRESS =
+  process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ??
+  "SP2022VXQ3E384AAHQ15KFFXVN3CY5G57HWCCQX23";
+const CONTRACT_NAME = process.env.NEXT_PUBLIC_CONTRACT_NAME ?? "streak";
+const STACKS_NETWORK = (process.env.NEXT_PUBLIC_STACKS_NETWORK ??
+  "mainnet") as "mainnet" | "testnet";
+
+const WALLET_NETWORK = STACKS_NETWORK;
+const ADDRESS_PREFIX = STACKS_NETWORK === "mainnet" ? "SP" : "ST";
+const STACKS_NETWORK_OBJ =
+  STACKS_NETWORK === "mainnet" ? STACKS_MAINNET : STACKS_TESTNET;
+
+const BADGE_MILESTONES = [
+  { kind: 3, label: "3 day" },
+  { kind: 7, label: "7 day" },
+  { kind: 14, label: "14 day" },
+  { kind: 30, label: "30 day" },
+] as const;
 
 export default function ClientPage() {
   const [walletAddress, setWalletAddress] = useState<string>("");
@@ -27,6 +42,12 @@ export default function ClientPage() {
   const [streak, setStreak] = useState<number | null>(null);
   const [lastClaimDay, setLastClaimDay] = useState<number | null>(null);
   const [hasBadge, setHasBadge] = useState<boolean | null>(null);
+  const [badgeSupport, setBadgeSupport] = useState<"v1" | "v2" | null>(null);
+  const [badgeStatus, setBadgeStatus] = useState<Record<number, boolean>>({});
+  const [badgeTokenIds, setBadgeTokenIds] = useState<
+    Record<number, number | null>
+  >({});
+  const [badgeUris, setBadgeUris] = useState<Record<number, string | null>>({});
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
 
@@ -113,13 +134,13 @@ export default function ClientPage() {
     const sender = address || CONTRACT_ADDRESS;
 
     try {
-      const [streakCV, lastDayCV, badgeCV] = await Promise.all([
+      const [streakCV, lastDayCV] = await Promise.all([
         fetchCallReadOnlyFunction({
           contractAddress: CONTRACT_ADDRESS,
           contractName: CONTRACT_NAME,
           functionName: "get-streak",
           functionArgs: [principalCV(sender)],
-          network: STACKS_MAINNET,
+          network: STACKS_NETWORK_OBJ,
           senderAddress: sender,
         }),
         fetchCallReadOnlyFunction({
@@ -127,22 +148,13 @@ export default function ClientPage() {
           contractName: CONTRACT_NAME,
           functionName: "get-last-claim-day",
           functionArgs: [principalCV(sender)],
-          network: STACKS_MAINNET,
-          senderAddress: sender,
-        }),
-        fetchCallReadOnlyFunction({
-          contractAddress: CONTRACT_ADDRESS,
-          contractName: CONTRACT_NAME,
-          functionName: "has-badge",
-          functionArgs: [principalCV(sender)],
-          network: STACKS_MAINNET,
+          network: STACKS_NETWORK_OBJ,
           senderAddress: sender,
         }),
       ]);
 
       const streakValue = cvToValue(streakCV) as unknown;
       const lastDayValue = cvToValue(lastDayCV) as unknown;
-      const badgeValue = cvToValue(badgeCV) as unknown;
       setStreak(
         typeof streakValue === "bigint"
           ? Number(streakValue)
@@ -153,7 +165,90 @@ export default function ClientPage() {
           ? Number(lastDayValue)
           : (lastDayValue as number)
       );
-      setHasBadge(Boolean(badgeValue));
+
+      const loadV2Badges = async () => {
+        const badgeChecks = await Promise.all(
+          BADGE_MILESTONES.map(async (milestone) => {
+            const [hasCV, tokenCV, uriCV] = await Promise.all([
+              fetchCallReadOnlyFunction({
+                contractAddress: CONTRACT_ADDRESS,
+                contractName: CONTRACT_NAME,
+                functionName: "has-badge-kind",
+                functionArgs: [principalCV(sender), uintCV(milestone.kind)],
+                network: STACKS_NETWORK_OBJ,
+                senderAddress: sender,
+              }),
+              fetchCallReadOnlyFunction({
+                contractAddress: CONTRACT_ADDRESS,
+                contractName: CONTRACT_NAME,
+                functionName: "get-badge-token-id",
+                functionArgs: [principalCV(sender), uintCV(milestone.kind)],
+                network: STACKS_NETWORK_OBJ,
+                senderAddress: sender,
+              }),
+              fetchCallReadOnlyFunction({
+                contractAddress: CONTRACT_ADDRESS,
+                contractName: CONTRACT_NAME,
+                functionName: "get-badge-uri",
+                functionArgs: [uintCV(milestone.kind)],
+                network: STACKS_NETWORK_OBJ,
+                senderAddress: sender,
+              }),
+            ]);
+            return {
+              kind: milestone.kind,
+              has: Boolean(cvToValue(hasCV)),
+              token: cvToValue(tokenCV) as unknown,
+              uri: cvToValue(uriCV) as unknown,
+            };
+          })
+        );
+
+        const nextStatus: Record<number, boolean> = {};
+        const nextTokenIds: Record<number, number | null> = {};
+        const nextUris: Record<number, string | null> = {};
+        for (const entry of badgeChecks) {
+          nextStatus[entry.kind] = entry.has;
+          if (entry.token === null) {
+            nextTokenIds[entry.kind] = null;
+          } else if (typeof entry.token === "bigint") {
+            nextTokenIds[entry.kind] = Number(entry.token);
+          } else if (typeof entry.token === "number") {
+            nextTokenIds[entry.kind] = entry.token;
+          } else {
+            nextTokenIds[entry.kind] = null;
+          }
+
+          nextUris[entry.kind] =
+            typeof entry.uri === "string" ? entry.uri : null;
+        }
+
+        setBadgeSupport("v2");
+        setBadgeStatus(nextStatus);
+        setBadgeTokenIds(nextTokenIds);
+        setBadgeUris(nextUris);
+        setHasBadge(Boolean(nextStatus[7]));
+      };
+
+      try {
+        await loadV2Badges();
+      } catch {
+        const badgeCV = await fetchCallReadOnlyFunction({
+          contractAddress: CONTRACT_ADDRESS,
+          contractName: CONTRACT_NAME,
+          functionName: "has-badge",
+          functionArgs: [principalCV(sender)],
+          network: STACKS_NETWORK_OBJ,
+          senderAddress: sender,
+        });
+        const badgeValue = cvToValue(badgeCV) as unknown;
+        setBadgeSupport("v1");
+        setHasBadge(Boolean(badgeValue));
+        setBadgeStatus({ 7: Boolean(badgeValue) });
+        setBadgeTokenIds({});
+        setBadgeUris({});
+      }
+
       setStatus("On-chain data refreshed");
     } catch {
       setError("Failed to fetch on-chain data.");
@@ -178,7 +273,7 @@ export default function ClientPage() {
         contractName: CONTRACT_NAME,
         functionName: "claim",
         functionArgs: [],
-        network: STACKS_MAINNET,
+        network: STACKS_NETWORK_OBJ,
         appDetails: {
           name: APP_NAME,
           icon: new URL(APP_ICON_PATH, window.location.origin).toString(),
@@ -243,8 +338,8 @@ export default function ClientPage() {
               <span> Claim daily.</span>
             </div>
             <p className={styles.lede}>
-              StackUp tracks your daily claim on Stacks mainnet. Claim once per
-              day to build momentum and unlock your 7-day NFT badge.
+              StackUp tracks your daily claim on Stacks {STACKS_NETWORK}. Claim
+              once per day to build momentum and unlock NFT badges.
             </p>
             <div className={styles.heroActions}>
               <button className={styles.button} onClick={claimStreak}>
@@ -262,7 +357,9 @@ export default function ClientPage() {
           <div className={styles.panel}>
             <div className={styles.panelHeader}>
               <h2>Wallet status</h2>
-              <span className={styles.pill}>Mainnet</span>
+              <span className={styles.pill}>
+                {STACKS_NETWORK === "mainnet" ? "Mainnet" : "Testnet"}
+              </span>
             </div>
             <div className={styles.stack}>
               <div className={styles.status}>
@@ -305,7 +402,7 @@ export default function ClientPage() {
                 </code>
               </div>
               <div className={styles.footnote}>
-                Deployed on Stacks mainnet.
+                Deployed on Stacks {STACKS_NETWORK}.
               </div>
             </div>
           </div>
@@ -320,24 +417,62 @@ export default function ClientPage() {
                 <div className={styles.badge}>
                   <strong>7</strong> day streak badge
                 </div>
+                <div className={styles.badgeThumb}>
+                  <Image
+                    src="/badges/7-day-streak.png"
+                    alt="7 day streak badge"
+                    width={92}
+                    height={92}
+                    style={{ height: "auto" }}
+                  />
+                </div>
               </div>
-              <div className={styles.status}>
-                Badge status:{" "}
-                <span
-                  className={
-                    hasBadge === null
-                      ? ""
-                      : hasBadge
-                      ? styles.success
-                      : styles.warn
-                  }
-                >
-                  {hasBadge === null ? "Not loaded" : hasBadge ? "Earned" : "Not yet"}
-                </span>
+
+              <div className={styles.field}>
+                Badge support
+                <code>
+                  {badgeSupport === null ? "Not loaded" : badgeSupport.toUpperCase()}
+                </code>
               </div>
+
+              {BADGE_MILESTONES.map((milestone) => {
+                const earned =
+                  badgeStatus[milestone.kind] ??
+                  (milestone.kind === 7 ? hasBadge ?? false : false);
+                const tokenId = badgeTokenIds[milestone.kind];
+                const tokenUri = badgeUris[milestone.kind];
+                const statusLabel =
+                  hasBadge === null && badgeSupport === null
+                    ? "Not loaded"
+                    : earned
+                    ? "Earned"
+                    : "Not yet";
+
+                return (
+                  <div key={milestone.kind} className={styles.field}>
+                    {milestone.label} badge
+                    <code>
+                      {statusLabel}
+                      {earned && tokenId !== undefined && tokenId !== null
+                        ? ` (token ${tokenId})`
+                        : ""}
+                    </code>
+                    {tokenUri ? (
+                      <div className={styles.footnote}>
+                        Metadata: <code>{tokenUri}</code>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+
               <div className={styles.footnote}>
-                Badge mints are triggered by the on-chain <code>claim</code>{" "}
-                function once your streak hits 7.
+                Badges are minted by the on-chain <code>claim</code> function.
+                {badgeSupport === "v1"
+                  ? " This contract supports the 7-day badge."
+                  : badgeSupport === "v2"
+                  ? " This contract supports multiple milestones."
+                  : ""}
               </div>
             </div>
           </div>

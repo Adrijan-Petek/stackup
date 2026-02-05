@@ -198,6 +198,18 @@
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.badgeThumb {
+  width: 92px;
+  height: 92px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
 }
 
 .badge {

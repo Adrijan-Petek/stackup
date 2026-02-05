@@ -40,6 +40,9 @@ settings/*.toml
 # clarinet deployments output
 deployments/
 
+# clarinet cache
+/.cache/
+
 # vercel
 .vercel
 

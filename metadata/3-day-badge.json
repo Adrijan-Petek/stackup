@@ -1,0 +1,10 @@
+{
+  "name": "StackUp 3-Day Streak",
+  "description": "Awarded for maintaining a 3-day claim streak on StackUp.",
+  "image": "ipfs://REPLACE_WITH_IMAGE_CID",
+  "attributes": [
+    { "trait_type": "milestone_days", "value": 3 },
+    { "trait_type": "app", "value": "StackUp" }
+  ]
+}
+
