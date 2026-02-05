@@ -2,6 +2,12 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
+import {
+  connect,
+  disconnect,
+  openContractCall,
+  request,
+} from "@stacks/connect";
 import { STACKS_TESTNET } from "@stacks/network";
 import {
   cvToValue,
@@ -56,7 +62,6 @@ export default function ClientPage() {
     setError("");
     setStatus("Opening wallet...");
     try {
-      const { connect, request } = await import("@stacks/connect");
       const result = await connect({
         network: "testnet",
       });
@@ -89,7 +94,6 @@ export default function ClientPage() {
   };
 
   const disconnectWallet = async () => {
-    const { disconnect } = await import("@stacks/connect");
     disconnect();
     setWalletAddress("");
     setStatus("Not connected");
@@ -167,7 +171,6 @@ export default function ClientPage() {
     setStatus("Submitting claim...");
 
     try {
-      const { openContractCall } = await import("@stacks/connect");
       openContractCall({
         contractAddress: CONTRACT_ADDRESS,
         contractName: CONTRACT_NAME,
