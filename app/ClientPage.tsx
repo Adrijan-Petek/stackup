@@ -99,6 +99,25 @@ export default function ClientPage() {
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
     : "Not connected";
 
+  const shareApp = async () => {
+    try {
+      const url = window.location.href;
+      const title = "StackUp";
+      const text = "Daily streaks on Stacks.";
+
+      if (navigator.share) {
+        await navigator.share({ title, text, url });
+        setStatus("Share sheet opened");
+        return;
+      }
+
+      await navigator.clipboard.writeText(url);
+      setStatus("Link copied");
+    } catch {
+      setStatus("Share failed");
+    }
+  };
+
   const stacksApiBase =
     STACKS_NETWORK === "mainnet"
       ? "https://api.mainnet.hiro.so"
@@ -630,9 +649,7 @@ export default function ClientPage() {
                   type="button"
                 >
                   <span className={styles.walletMain}>{shortAddress}</span>
-                  <span className={styles.walletSub}>
-                    Streak {streak ?? "-"} {" | "}Day {lastClaimDay ?? "-"}
-                  </span>
+                  <span className={styles.walletSub}>View on-chain</span>
                 </button>
                 <button
                   className={`${styles.button} ${styles.ghostButton}`}
@@ -657,8 +674,8 @@ export default function ClientPage() {
               <span> Claim daily.</span>
             </div>
             <p className={styles.lede}>
-              StackUp tracks your daily claim on Stacks {STACKS_NETWORK}. Claim
-              once per day to build momentum and unlock NFT badges.
+              Track one claim per day on Stacks {STACKS_NETWORK}. Earn streak badges
+              automatically as you hit milestones.
             </p>
             <div className={styles.heroMeta}>
               <div className={styles.metaItem}>
@@ -679,6 +696,27 @@ export default function ClientPage() {
                 disabled={isLoading}
               >
                 {isLoading ? "Refreshing..." : "Refresh On-Chain"}
+              </button>
+            </div>
+            <div className={styles.statsRow}>
+              <div className={styles.statChip}>
+                <div className={styles.statLabel}>Streak</div>
+                <div className={styles.statValue}>
+                  {streak === null ? "—" : streak}
+                </div>
+              </div>
+              <div className={styles.statChip}>
+                <div className={styles.statLabel}>Last claim day</div>
+                <div className={styles.statValue}>
+                  {lastClaimDay === null ? "—" : lastClaimDay}
+                </div>
+              </div>
+              <button
+                className={`${styles.button} ${styles.ghostButton} ${styles.shareButton}`}
+                onClick={shareApp}
+                type="button"
+              >
+                Share
               </button>
             </div>
             <div className={styles.statusLine}>
@@ -814,6 +852,21 @@ export default function ClientPage() {
             </div>
           </div>
         </section>
+
+        <footer className={styles.footer}>
+          <div className={styles.footerInner}>
+            <div className={styles.footerText}>
+              StackUp is a lightweight streak tracker on Stacks.
+            </div>
+            <button
+              className={`${styles.button} ${styles.ghostButton} ${styles.shareButton}`}
+              onClick={shareApp}
+              type="button"
+            >
+              Share
+            </button>
+          </div>
+        </footer>
 
         {adminUnlocked && adminOpen ? (
           <div
