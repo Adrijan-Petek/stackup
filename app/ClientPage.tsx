@@ -168,6 +168,7 @@ export default function ClientPage() {
       setWalletAddress(nextAddress);
       if (nextAddress) {
         setStatus("Wallet connected");
+        fetchOnChain(nextAddress);
       } else {
         setStatus("Connected");
         setError(
@@ -192,7 +193,7 @@ export default function ClientPage() {
     setStatus("Not connected");
   };
 
-  const fetchOnChain = useCallback(async () => {
+  const fetchOnChain = useCallback(async (senderOverride?: string) => {
     if (
       !(
         CONTRACT_ADDRESS.startsWith("ST") ||
@@ -208,7 +209,7 @@ export default function ClientPage() {
     setIsLoading(true);
     setError("");
 
-    const sender = address || CONTRACT_ADDRESS;
+    const sender = senderOverride || address || CONTRACT_ADDRESS;
 
     try {
       const [streakCV, lastDayCV] = await Promise.all([
@@ -391,6 +392,15 @@ export default function ClientPage() {
     }
   }, [address]);
 
+  const scheduleRefresh = useCallback(
+    (senderOverride?: string) => {
+      // Most transactions won't reflect immediately; refresh a couple times.
+      setTimeout(() => fetchOnChain(senderOverride), 6_000);
+      setTimeout(() => fetchOnChain(senderOverride), 18_000);
+    },
+    [fetchOnChain]
+  );
+
   const openTx = (opts: { functionName: string; functionArgs: ClarityValue[] }) => {
     openContractCall({
       contractAddress: CONTRACT_ADDRESS,
@@ -405,9 +415,7 @@ export default function ClientPage() {
       onFinish: (data) => {
         setLastTxId(data.txId ?? "");
         setStatus("Transaction submitted");
-        setTimeout(() => {
-          fetchOnChain();
-        }, 1500);
+        scheduleRefresh(address || undefined);
       },
       onCancel: () => {
         setStatus("Transaction cancelled");
@@ -455,7 +463,7 @@ export default function ClientPage() {
         onFinish: (data) => {
           setLastTxId(data.txId ?? "");
           setStatus("Milestones submitted");
-          setTimeout(() => fetchOnChain(), 1500);
+          scheduleRefresh(address);
         },
         onCancel: () => setStatus("Milestones cancelled"),
       });
@@ -511,7 +519,7 @@ export default function ClientPage() {
         onFinish: (data) => {
           setLastTxId(data.txId ?? "");
           setStatus("Fee-recipient submitted");
-          setTimeout(() => fetchOnChain(), 1500);
+          scheduleRefresh(address);
         },
         onCancel: () => setStatus("Fee-recipient cancelled"),
       });
@@ -557,7 +565,7 @@ export default function ClientPage() {
         onFinish: (data) => {
           setLastTxId(data.txId ?? "");
           setStatus("Badge URI submitted");
-          setTimeout(() => fetchOnChain(), 1500);
+          scheduleRefresh(address);
         },
         onCancel: () => setStatus("Badge URI cancelled"),
       });
@@ -611,6 +619,7 @@ export default function ClientPage() {
         onFinish: (data) => {
           setLastTxId(data.txId ?? "");
           setStatus("Claim submitted");
+          scheduleRefresh(address || undefined);
         },
         onCancel: () => {
           setStatus("Claim cancelled");
@@ -640,10 +649,7 @@ export default function ClientPage() {
         onFinish: (data) => {
           setLastTxId(data.txId ?? "");
           setStatus("Mint submitted");
-          // Refresh shortly after submit so the UI catches up once confirmed.
-          setTimeout(() => {
-            fetchOnChain();
-          }, 1500);
+          scheduleRefresh(address || undefined);
         },
         onCancel: () => {
           setStatus("Mint cancelled");
@@ -784,13 +790,13 @@ export default function ClientPage() {
               <button className={styles.button} onClick={claimStreak}>
                 Claim Now
               </button>
-              <button
-                className={`${styles.button} ${styles.ghostButton}`}
-                onClick={fetchOnChain}
-                disabled={isLoading}
-              >
-                {isLoading ? "Refreshing..." : "Refresh On-Chain"}
-              </button>
+                <button
+                  className={`${styles.button} ${styles.ghostButton}`}
+                  onClick={() => fetchOnChain()}
+                  disabled={isLoading}
+                >
+                  {isLoading ? "Refreshing..." : "Refresh On-Chain"}
+                </button>
             </div>
           </div>
           <div className={styles.panel}>
@@ -896,8 +902,8 @@ export default function ClientPage() {
                             {hasBadge === null && badgeSupport === null
                               ? "Not loaded"
                               : earned
-                              ? "Earned"
-                              : "Not yet"}
+                              ? "Claimed"
+                              : "Not claimed"}
                           </span>
                         </div>
                         {earned && tokenId !== undefined && tokenId !== null ? (
