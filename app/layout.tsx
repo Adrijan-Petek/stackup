@@ -12,9 +12,36 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
 });
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  process.env.CF_PAGES_URL ??
+  "http://localhost:3000";
+
 export const metadata: Metadata = {
   title: "StackUp",
   description: "Daily streaks and badge rewards on Stacks.",
+  metadataBase: new URL(siteUrl),
+  openGraph: {
+    type: "website",
+    title: "StackUp",
+    description: "Daily streaks and badge rewards on Stacks.",
+    url: "/",
+    siteName: "StackUp",
+    images: [
+      {
+        url: "/logo/logo-light.png",
+        width: 1200,
+        height: 630,
+        alt: "StackUp",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "StackUp",
+    description: "Daily streaks and badge rewards on Stacks.",
+    images: ["/logo/logo-light.png"],
+  },
   icons: {
     icon: [
       { url: "/icons/favicon.ico" },
