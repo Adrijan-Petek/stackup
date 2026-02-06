@@ -13,7 +13,8 @@
 ;; signature as a "token transfer outside a function". The contract still exposes
 ;; the SIP-009-compatible functions (`get-token-uri`, `get-owner`, `transfer`).
 
-(define-constant CONTRACT_OWNER 'SP2022VXQ3E384AAHQ15KFFXVN3CY5G57HWCCQX23)
+;; Owner is captured at deploy time (the contract deployer).
+(define-data-var contract-owner principal tx-sender)
 
 (define-constant ERR_ALREADY_CLAIMED u100)
 (define-constant ERR_NOT_OWNER u101)
@@ -44,9 +45,18 @@
 (define-non-fungible-token badge uint)
 
 (define-private (assert-owner)
-  (if (is-eq tx-sender CONTRACT_OWNER)
+  (if (is-eq tx-sender (var-get contract-owner))
       (ok true)
       (err ERR_NOT_OWNER)
+  )
+)
+
+(define-public (set-contract-owner (new-owner principal))
+  (match (assert-owner)
+    ok-val (begin
+      (var-set contract-owner new-owner)
+      (ok true))
+    err-code (err err-code)
   )
 )
 
