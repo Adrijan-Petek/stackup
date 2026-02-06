@@ -32,3 +32,8 @@ epoch = "3.1"
 path = "contracts/streak-v3-4.clar"
 clarity_version = 3
 epoch = "3.1"
+
+[contracts.streak-v3-5]
+path = "contracts/streak-v3-5.clar"
+clarity_version = 3
+epoch = "3.1"
