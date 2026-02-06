@@ -9,13 +9,6 @@ plan:
     - id: 0
       transactions:
         - contract-publish:
-            contract-name: sip009-nft-trait
-            expected-sender: STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ
-            cost: 4110
-            path: contracts/sip009-nft-trait.clar
-            anchor-block-only: true
-            clarity-version: 3
-        - contract-publish:
             contract-name: streak
             expected-sender: STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ
             cost: 35270
@@ -25,7 +18,7 @@ plan:
         - contract-publish:
             contract-name: streak-v2
             expected-sender: STC5KHM41H6WHAST7MWWDD807YSPRQKJ68T330BQ
-            cost: 72870
+            cost: 75670
             path: contracts/streak-v2.clar
             anchor-block-only: true
             clarity-version: 3
