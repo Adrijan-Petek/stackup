@@ -7,8 +7,11 @@
 ;; Notes:
 ;; - This is a new contract (immutable once deployed). Deploy as `streak-v2`.
 ;; - Set CONTRACT_OWNER to the deploying principal before mainnet deployment.
-
-(impl-trait .sip009-nft-trait.sip009-nft-trait)
+;;
+;; We intentionally do NOT `impl-trait` a separate SIP-009 trait contract here.
+;; Some deployment UIs incorrectly flag a `define-trait` that includes a `transfer`
+;; signature as a "token transfer outside a function". The contract still exposes
+;; the SIP-009-compatible functions (`get-token-uri`, `get-owner`, `transfer`).
 
 (define-constant CONTRACT_OWNER 'SP2022VXQ3E384AAHQ15KFFXVN3CY5G57HWCCQX23)
 
