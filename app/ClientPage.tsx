@@ -7,6 +7,7 @@ import { STACKS_MAINNET, STACKS_TESTNET } from "@stacks/network";
 import {
   cvToValue,
   fetchCallReadOnlyFunction,
+  hexToCV,
   listCV,
   principalCV,
   type ClarityValue,
@@ -132,27 +133,31 @@ export default function ClientPage() {
       if (!res.ok) return;
       const body = (await res.json()) as unknown;
 
-      const repr =
-        typeof body === "object" && body !== null && "repr" in body
-          ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (body as any).repr
-          : null;
+      // Hiro returns `{ data: "0x..." }` (Clarity hex) for data-vars.
       const data =
         typeof body === "object" && body !== null && "data" in body
           ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (body as any).data
           : null;
 
-      const candidateText =
-        typeof repr === "string"
-          ? repr
-          : typeof data === "string"
-          ? data
-          : "";
+      if (typeof data === "string" && data.startsWith("0x")) {
+        const cv = hexToCV(data);
+        const val = cvToValue(cv) as unknown;
+        if (typeof val === "string" && (val.startsWith("SP") || val.startsWith("ST"))) {
+          setContractOwner(val);
+          return;
+        }
+      }
 
-      const match = candidateText.match(/(SP|ST)[A-Z0-9]{20,}/);
-      if (match?.[0]) {
-        setContractOwner(match[0]);
+      // Fallback for any other representation.
+      const repr =
+        typeof body === "object" && body !== null && "repr" in body
+          ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (body as any).repr
+          : null;
+      if (typeof repr === "string") {
+        const match = repr.match(/(SP|ST)[A-Z0-9]{20,}/);
+        if (match?.[0]) setContractOwner(match[0]);
       }
     } catch {
       // ignore
