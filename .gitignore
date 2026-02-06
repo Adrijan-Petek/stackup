@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# local-only secrets/config
+badge-uris.local.json
+
 # local settings (keep mnemonics private)
 settings/*.toml
 !settings/Devnet.toml
