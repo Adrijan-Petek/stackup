@@ -691,8 +691,13 @@ export default function ClientPage() {
         <section className={styles.panelGrid}>
           <div className={styles.panel}>
             <div className={styles.panelHeader}>
-              <h2>Badge milestone</h2>
-              <span className={styles.pill}>NFT</span>
+              <div className={styles.panelTitleBlock}>
+                <h2>Badges</h2>
+                <div className={styles.panelSubtitle}>
+                  Earned automatically when you hit streak milestones.
+                </div>
+              </div>
+              <span className={styles.pill}>Streak</span>
             </div>
             <div className={styles.stack}>
               <div className={styles.badgeGrid}>
@@ -709,6 +714,22 @@ export default function ClientPage() {
                     streak >= milestone.kind &&
                     !earned;
 
+                  const isLocked =
+                    badgeSupport !== null &&
+                    typeof streak === "number" &&
+                    streak < milestone.kind;
+
+                  const statusLabel =
+                    badgeSupport === null
+                      ? "Loading"
+                      : earned
+                      ? "Claimed"
+                      : canMint
+                      ? "Ready"
+                      : isLocked
+                      ? "Locked"
+                      : "Not claimed";
+
                   return (
                     <div key={milestone.kind} className={styles.badgeCard}>
                       <div className={styles.badgeThumb}>
@@ -722,24 +743,21 @@ export default function ClientPage() {
                       </div>
                       <div className={styles.badgeMeta}>
                         <div className={styles.badgeTitle}>
-                          <strong>{milestone.kind}</strong> day badge
+                          <strong>{milestone.label}</strong>
                         </div>
                         <div className={styles.badgeLine}>
-                          Status:{" "}
                           <span
                             className={
-                              hasBadge === null && badgeSupport === null
+                              badgeSupport === null
                                 ? ""
                                 : earned
+                                ? styles.success
+                                : canMint
                                 ? styles.success
                                 : styles.warn
                             }
                           >
-                            {hasBadge === null && badgeSupport === null
-                              ? "Not loaded"
-                              : earned
-                              ? "Claimed"
-                              : "Not claimed"}
+                            {statusLabel}
                           </span>
                         </div>
                         {earned && tokenId !== undefined && tokenId !== null ? (
@@ -768,6 +786,30 @@ export default function ClientPage() {
                   : badgeSupport === "v2"
                   ? " This contract supports multiple milestones. New milestones are enabled by setting a token URI, and users can mint them any time after reaching the streak."
                   : ""}
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.panel}>
+            <div className={styles.panelHeader}>
+              <div className={styles.panelTitleBlock}>
+                <h2>NFTs</h2>
+                <div className={styles.panelSubtitle}>
+                  Creator drops and paid mints will live here.
+                </div>
+              </div>
+              <span className={styles.pill}>Soon</span>
+            </div>
+            <div className={styles.stack}>
+              <div className={styles.emptyState}>
+                <div className={styles.emptyTitle}>No drops yet.</div>
+                <div className={styles.emptyBody}>
+                  We’ll add paid collectibles in a separate, cleaner flow.
+                </div>
+              </div>
+              <div className={styles.footnote}>
+                Tip: the admin panel is hidden behind <strong>7 taps</strong> on the
+                logo (owner-only).
               </div>
             </div>
           </div>

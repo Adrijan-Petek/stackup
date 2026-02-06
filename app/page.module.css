@@ -127,9 +127,23 @@
   margin-bottom: 20px;
 }
 
+.panelTitleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
 .panelHeader h2 {
   font-size: 18px;
   font-weight: 600;
+}
+
+.panelSubtitle {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+  max-width: 48ch;
 }
 
 .pill {
@@ -470,6 +484,31 @@
 
 .danger {
   color: var(--danger);
+}
+
+.emptyState {
+  border-radius: 18px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 18px;
+}
+
+[data-theme="light"] .emptyState {
+  border-color: rgba(0, 0, 0, 0.16);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.emptyTitle {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.emptyBody {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
 }
 
 @media (max-width: 720px) {
