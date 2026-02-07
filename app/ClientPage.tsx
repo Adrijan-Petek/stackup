@@ -60,6 +60,7 @@ const INFERNO_PULSE = {
   imageCid: "bafybeidm2pqh5ty5ltlt4zpl3osy2t27annf5zui5ur6j6uxwk2oco24zm",
   localImagePath: "/nfts/inferno-pulse.png",
   name: "StackUp: Inferno Pulse",
+  kind: 101,
 } as const;
 
 type NftOverrideEntry = {
@@ -115,6 +116,7 @@ export default function ClientPage() {
     Record<number, number | null>
   >({});
   const [milestones, setMilestones] = useState<number[] | null>(null);
+  const [badgeUris, setBadgeUris] = useState<Record<number, string | null>>({});
   const [adminOpen, setAdminOpen] = useState<boolean>(false);
   const [adminUnlocked, setAdminUnlocked] = useState<boolean>(false);
   const [adminTapCount, setAdminTapCount] = useState<number>(0);
@@ -131,6 +133,8 @@ export default function ClientPage() {
   const [collectiblesStatus, setCollectiblesStatus] = useState<
     "idle" | "loading" | "loaded" | "error"
   >("idle");
+  const [infernoFeeUstx, setInfernoFeeUstx] = useState<number | null>(null);
+  const [infernoUri, setInfernoUri] = useState<string | null>(null);
   const [nftOverrides, setNftOverrides] = useState<NftOverrides>({
     byTokenId: {},
     byKind: {},
@@ -346,10 +350,20 @@ export default function ClientPage() {
         );
 
         const badgeKinds = new Set<number>(BADGE_MILESTONES.map((m) => m.kind));
+        const badgeTokenIdSet = new Set<number>(
+          Object.values(badgeTokenIds)
+            .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+        );
+        const badgeUriSet = new Set<string>(
+          Object.values(badgeUris)
+            .filter((v): v is string => typeof v === "string" && v.length > 0)
+        );
 
         const collectibleItems: OwnedCollectible[] = [];
         for (const info of tokenInfo) {
+          if (badgeTokenIdSet.has(info.tokenId)) continue;
           if (info.kind !== null && badgeKinds.has(info.kind)) continue;
+          if (info.metadataUri && badgeUriSet.has(info.metadataUri)) continue;
           if (info.kind === null) {
             // If we can't resolve kind, treat it as non-badge but keep it safe in UI.
           }
@@ -420,7 +434,7 @@ export default function ClientPage() {
         setCollectiblesStatus("error");
       }
     },
-    [stacksApiBase, getOverrideForToken, resolveLocalNftImage]
+    [stacksApiBase, getOverrideForToken, resolveLocalNftImage, badgeTokenIds, badgeUris]
   );
 
   useEffect(() => {
@@ -678,14 +692,32 @@ export default function ClientPage() {
 
       try {
         const senderAddress = sender;
-        const milestonesCV = await fetchCallReadOnlyFunction({
-          contractAddress: CONTRACT_ADDRESS,
-          contractName: CONTRACT_NAME,
-          functionName: "get-milestones",
-          functionArgs: [],
-          network: STACKS_NETWORK_OBJ,
-          senderAddress,
-        });
+        const [milestonesCV, infernoFeeCV, infernoUriCV] = await Promise.all([
+          fetchCallReadOnlyFunction({
+            contractAddress: CONTRACT_ADDRESS,
+            contractName: CONTRACT_NAME,
+            functionName: "get-milestones",
+            functionArgs: [],
+            network: STACKS_NETWORK_OBJ,
+            senderAddress,
+          }),
+          fetchCallReadOnlyFunction({
+            contractAddress: CONTRACT_ADDRESS,
+            contractName: CONTRACT_NAME,
+            functionName: "get-mint-fee-kind",
+            functionArgs: [uintCV(INFERNO_PULSE.kind)],
+            network: STACKS_NETWORK_OBJ,
+            senderAddress,
+          }),
+          fetchCallReadOnlyFunction({
+            contractAddress: CONTRACT_ADDRESS,
+            contractName: CONTRACT_NAME,
+            functionName: "get-badge-uri",
+            functionArgs: [uintCV(INFERNO_PULSE.kind)],
+            network: STACKS_NETWORK_OBJ,
+            senderAddress,
+          }),
+        ]);
 
         const ms = cvToValue(milestonesCV) as unknown;
 
@@ -697,6 +729,43 @@ export default function ClientPage() {
           setAdminMilestones(parsed.join(","));
         } else {
           setMilestones(null);
+        }
+
+        const feeUnwrapped = unwrapCvToValue(cvToValue(infernoFeeCV) as unknown);
+        const fee =
+          feeUnwrapped === null
+            ? null
+            : typeof feeUnwrapped === "bigint"
+              ? Number(feeUnwrapped)
+              : typeof feeUnwrapped === "number"
+                ? feeUnwrapped
+                : null;
+        setInfernoFeeUstx(fee);
+
+        const uriUnwrapped = unwrapCvToValue(cvToValue(infernoUriCV) as unknown);
+        setInfernoUri(typeof uriUnwrapped === "string" ? uriUnwrapped : null);
+
+        try {
+          const kindsToLoad = BADGE_MILESTONES.map((m) => m.kind);
+          const uriPairs = await Promise.all(
+            kindsToLoad.map(async (kind) => {
+              const v = await fetchCallReadOnlyFunction({
+                contractAddress: CONTRACT_ADDRESS,
+                contractName: CONTRACT_NAME,
+                functionName: "get-badge-uri",
+                functionArgs: [uintCV(kind)],
+                network: STACKS_NETWORK_OBJ,
+                senderAddress,
+              });
+              const u = unwrapCvToValue(cvToValue(v) as unknown);
+              return [kind, typeof u === "string" ? u : null] as const;
+            })
+          );
+          const nextMap: Record<number, string | null> = {};
+          for (const [k, u] of uriPairs) nextMap[k] = u;
+          setBadgeUris(nextMap);
+        } catch {
+          // ignore
         }
 
       } catch {
@@ -1011,6 +1080,38 @@ export default function ClientPage() {
     }
   };
 
+  const mintInfernoPulse = async () => {
+    if (!address) {
+      setError("Connect wallet first.");
+      return;
+    }
+
+    setError("");
+    setStatus("Minting Inferno Pulse...");
+
+    try {
+      openContractCall({
+        contractAddress: CONTRACT_ADDRESS,
+        contractName: CONTRACT_NAME,
+        functionName: "mint-paid-kind",
+        functionArgs: [uintCV(INFERNO_PULSE.kind)],
+        network: STACKS_NETWORK_OBJ,
+        appDetails: {
+          name: APP_NAME,
+          icon: new URL(APP_ICON_PATH, window.location.origin).toString(),
+        },
+        onFinish: () => {
+          setStatus("Mint submitted");
+          scheduleRefresh(address);
+        },
+        onCancel: () => setStatus("Mint cancelled"),
+      });
+    } catch {
+      setError("Failed to open mint transaction.");
+      setStatus("Mint failed");
+    }
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.shell}>
@@ -1247,6 +1348,47 @@ export default function ClientPage() {
               <span className={styles.pill}>Owned</span>
             </div>
             <div className={styles.stack}>
+              <div className={styles.dropCard}>
+                <div className={styles.dropLeft}>
+                  <div className={styles.dropThumb}>
+                    <Image
+                      src={INFERNO_PULSE.localImagePath}
+                      alt={INFERNO_PULSE.name}
+                      width={96}
+                      height={96}
+                      unoptimized
+                      style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                    />
+                  </div>
+                  <div className={styles.dropMeta}>
+                    <div className={styles.dropTitle}>{INFERNO_PULSE.name}</div>
+                    <div className={styles.dropLine}>
+                      Kind <code>u{INFERNO_PULSE.kind}</code>
+                      {" · "}
+                      {infernoFeeUstx === null
+                        ? "Price: —"
+                        : `Price: ${(infernoFeeUstx / 1_000_000).toFixed(2)} STX`}
+                    </div>
+                    <div className={styles.dropLine}>
+                      URI{" "}
+                      <code>
+                        {infernoUri ? infernoUri : "not set"}
+                      </code>
+                    </div>
+                  </div>
+                </div>
+                <div className={styles.dropRight}>
+                  <button
+                    className={styles.button}
+                    onClick={mintInfernoPulse}
+                    disabled={!address || !infernoUri}
+                    type="button"
+                  >
+                    Mint
+                  </button>
+                </div>
+              </div>
+
               {!address ? (
                 <div className={styles.emptyState}>
                   <div className={styles.emptyTitle}>Connect to view NFTs.</div>
