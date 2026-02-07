@@ -1,0 +1,10 @@
+{
+  "name": "StackUp: Storm Assasin",
+  "description": "A premium collectible minted on StackUp.",
+  "image": "ipfs://bafybeie7ot5lpvbjkwpxnky4hzovbotim5266hsnyag7qff6ekxpeiqelm",
+  "attributes": [
+    { "trait_type": "collection", "value": "StackUp Drops" },
+    { "trait_type": "type", "value": "paid_nft" }
+  ]
+}
+
