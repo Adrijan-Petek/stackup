@@ -772,63 +772,20 @@ export default function ClientPage() {
         }
       } 
 
+      // Admin/config reads should not be all-or-nothing. Older contracts might not
+      // expose every endpoint; prices should still load when possible.
       try {
-        const [
-          milestonesCV,
-          infernoFeeCV,
-          infernoUriCV,
-          stormFeeCV,
-          stormUriCV,
-        ] = await Promise.all([ 
-          fetchCallReadOnlyFunction({ 
-            contractAddress: CONTRACT_ADDRESS, 
-            contractName: CONTRACT_NAME, 
-            functionName: "get-milestones", 
-            functionArgs: [], 
-            network: STACKS_NETWORK_OBJ, 
-            client: { baseUrl: stacksApiBase },
-            senderAddress: caller, 
-          }), 
-          fetchCallReadOnlyFunction({ 
-            contractAddress: CONTRACT_ADDRESS, 
-            contractName: CONTRACT_NAME, 
-            functionName: "get-mint-fee-kind", 
-            functionArgs: [uintCV(INFERNO_PULSE.kind)], 
-            network: STACKS_NETWORK_OBJ, 
-            client: { baseUrl: stacksApiBase },
-            senderAddress: caller, 
-          }), 
-          fetchCallReadOnlyFunction({ 
-            contractAddress: CONTRACT_ADDRESS, 
-            contractName: CONTRACT_NAME, 
-            functionName: "get-badge-uri", 
-            functionArgs: [uintCV(INFERNO_PULSE.kind)], 
-            network: STACKS_NETWORK_OBJ, 
-            client: { baseUrl: stacksApiBase },
-            senderAddress: caller, 
-          }), 
-          fetchCallReadOnlyFunction({ 
-            contractAddress: CONTRACT_ADDRESS, 
-            contractName: CONTRACT_NAME, 
-            functionName: "get-mint-fee-kind", 
-            functionArgs: [uintCV(STORM_ASSASIN.kind)], 
-            network: STACKS_NETWORK_OBJ, 
-            client: { baseUrl: stacksApiBase },
-            senderAddress: caller, 
-          }), 
-          fetchCallReadOnlyFunction({ 
-            contractAddress: CONTRACT_ADDRESS, 
-            contractName: CONTRACT_NAME, 
-            functionName: "get-badge-uri", 
-            functionArgs: [uintCV(STORM_ASSASIN.kind)], 
-            network: STACKS_NETWORK_OBJ, 
-            client: { baseUrl: stacksApiBase },
-            senderAddress: caller, 
-          }), 
-        ]); 
+        const milestonesCV = await fetchCallReadOnlyFunction({
+          contractAddress: CONTRACT_ADDRESS,
+          contractName: CONTRACT_NAME,
+          functionName: "get-milestones",
+          functionArgs: [],
+          network: STACKS_NETWORK_OBJ,
+          client: { baseUrl: stacksApiBase },
+          senderAddress: caller,
+        });
 
         const ms = cvToValue(milestonesCV) as unknown;
-
         if (Array.isArray(ms)) {
           const parsed = ms
             .map((v) => (typeof v === "bigint" ? Number(v) : Number(v)))
@@ -838,7 +795,20 @@ export default function ClientPage() {
         } else {
           setMilestones(null);
         }
+      } catch {
+        setMilestones(null);
+      }
 
+      try {
+        const infernoFeeCV = await fetchCallReadOnlyFunction({
+          contractAddress: CONTRACT_ADDRESS,
+          contractName: CONTRACT_NAME,
+          functionName: "get-mint-fee-kind",
+          functionArgs: [uintCV(INFERNO_PULSE.kind)],
+          network: STACKS_NETWORK_OBJ,
+          client: { baseUrl: stacksApiBase },
+          senderAddress: caller,
+        });
         const feeUnwrapped = unwrapCvToValue(cvToValue(infernoFeeCV) as unknown);
         const fee =
           feeUnwrapped === null
@@ -849,10 +819,36 @@ export default function ClientPage() {
                 ? feeUnwrapped
                 : null;
         setInfernoFeeUstx(fee);
+      } catch {
+        setInfernoFeeUstx(null);
+      }
 
+      try {
+        const infernoUriCV = await fetchCallReadOnlyFunction({
+          contractAddress: CONTRACT_ADDRESS,
+          contractName: CONTRACT_NAME,
+          functionName: "get-badge-uri",
+          functionArgs: [uintCV(INFERNO_PULSE.kind)],
+          network: STACKS_NETWORK_OBJ,
+          client: { baseUrl: stacksApiBase },
+          senderAddress: caller,
+        });
         const uriUnwrapped = unwrapCvToValue(cvToValue(infernoUriCV) as unknown);
         setInfernoUri(typeof uriUnwrapped === "string" ? uriUnwrapped : null);
+      } catch {
+        setInfernoUri(null);
+      }
 
+      try {
+        const stormFeeCV = await fetchCallReadOnlyFunction({
+          contractAddress: CONTRACT_ADDRESS,
+          contractName: CONTRACT_NAME,
+          functionName: "get-mint-fee-kind",
+          functionArgs: [uintCV(STORM_ASSASIN.kind)],
+          network: STACKS_NETWORK_OBJ,
+          client: { baseUrl: stacksApiBase },
+          senderAddress: caller,
+        });
         const stormFeeUnwrapped = unwrapCvToValue(cvToValue(stormFeeCV) as unknown);
         const stormFee =
           stormFeeUnwrapped === null
@@ -863,37 +859,48 @@ export default function ClientPage() {
                 ? stormFeeUnwrapped
                 : null;
         setStormFeeUstx(stormFee);
+      } catch {
+        setStormFeeUstx(null);
+      }
 
+      try {
+        const stormUriCV = await fetchCallReadOnlyFunction({
+          contractAddress: CONTRACT_ADDRESS,
+          contractName: CONTRACT_NAME,
+          functionName: "get-badge-uri",
+          functionArgs: [uintCV(STORM_ASSASIN.kind)],
+          network: STACKS_NETWORK_OBJ,
+          client: { baseUrl: stacksApiBase },
+          senderAddress: caller,
+        });
         const stormUriUnwrapped = unwrapCvToValue(cvToValue(stormUriCV) as unknown);
         setStormUri(typeof stormUriUnwrapped === "string" ? stormUriUnwrapped : null);
-
-        try {
-          const kindsToLoad = BADGE_MILESTONES.map((m) => m.kind);
-          const uriPairs = await Promise.all(
-            kindsToLoad.map(async (kind) => {
-              const v = await fetchCallReadOnlyFunction({ 
-                contractAddress: CONTRACT_ADDRESS, 
-                contractName: CONTRACT_NAME, 
-                functionName: "get-badge-uri", 
-                functionArgs: [uintCV(kind)], 
-                network: STACKS_NETWORK_OBJ, 
-                client: { baseUrl: stacksApiBase },
-                senderAddress: caller, 
-              }); 
-              const u = unwrapCvToValue(cvToValue(v) as unknown);
-              return [kind, typeof u === "string" ? u : null] as const;
-            })
-          );
-          const nextMap: Record<number, string | null> = {};
-          for (const [k, u] of uriPairs) nextMap[k] = u;
-          setBadgeUris(nextMap);
-        } catch {
-          // ignore
-        }
-
       } catch {
-        // Older contracts might not expose these admin read-only endpoints.
-        setMilestones(null);
+        setStormUri(null);
+      }
+
+      try {
+        const kindsToLoad = BADGE_MILESTONES.map((m) => m.kind);
+        const uriPairs = await Promise.all(
+          kindsToLoad.map(async (kind) => {
+            const v = await fetchCallReadOnlyFunction({
+              contractAddress: CONTRACT_ADDRESS,
+              contractName: CONTRACT_NAME,
+              functionName: "get-badge-uri",
+              functionArgs: [uintCV(kind)],
+              network: STACKS_NETWORK_OBJ,
+              client: { baseUrl: stacksApiBase },
+              senderAddress: caller,
+            });
+            const u = unwrapCvToValue(cvToValue(v) as unknown);
+            return [kind, typeof u === "string" ? u : null] as const;
+          })
+        );
+        const nextMap: Record<number, string | null> = {};
+        for (const [k, u] of uriPairs) nextMap[k] = u;
+        setBadgeUris(nextMap);
+      } catch {
+        // ignore
       }
 
       const ownedSender = senderOverride || address;
