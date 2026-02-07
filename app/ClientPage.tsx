@@ -67,7 +67,7 @@ const INFERNO_PULSE = {
 const STORM_ASSASIN = {
   metadataCid: "bafkreiavecfbxphf3qejwyktvh5eosa7eveqghcft4sjcrfugrxqat6wbi",
   imageCid: "bafybeie7ot5lpvbjkwpxnky4hzovbotim5266hsnyag7qff6ekxpeiqelm",
-  localImagePath: "/nfts/storm-assasin.png",
+  localImagePath: "/nfts/storm-assassin.png",
   name: "StackUp: Storm Assasin",
   kind: 102,
 } as const;
