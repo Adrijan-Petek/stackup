@@ -6,9 +6,6 @@ import { connect, disconnect, openContractCall, request } from "@stacks/connect"
 import { STACKS_MAINNET, STACKS_TESTNET } from "@stacks/network";
 import {
   PostConditionMode,
-  cvToValue,
-  fetchCallReadOnlyFunction,
-  hexToCV,
   listCV,
   principalCV,
   type ClarityValue,
@@ -102,66 +99,11 @@ const ipfsToHttpsCandidates = (uri: string) => {
   ];
 };
 
-const unwrapCvToValue = (v: unknown): unknown => { 
-  if (v === null || v === undefined) return null; 
-  if (typeof v === "string" || typeof v === "number" || typeof v === "bigint") { 
-    return v; 
-  } 
- 
-  if (typeof v === "object") { 
-    const obj = v as Record<string, unknown>; 
- 
-    // Some cvToValue outputs wrap optionals/responses as { type, value } or { value }. 
-    if ("value" in obj) return unwrapCvToValue(obj.value); 
-    if ("data" in obj) return unwrapCvToValue(obj.data); 
-
-    // json-compat output shape: { type: "...", value: "..." } / { type: "...", value: ... }
-    if ("type" in obj && typeof obj.type === "string") {
-      const t = obj.type;
-      const value = "value" in obj ? (obj as Record<string, unknown>).value : undefined;
-
-      if (t === "none") return null;
-      if (t === "some") return unwrapCvToValue(value);
-      if (t === "ok") return unwrapCvToValue(value);
-      if (t === "err") return unwrapCvToValue(value);
-
-      if (t === "uint" || t === "int") {
-        if (typeof value === "bigint") return value;
-        if (typeof value === "number") return BigInt(value);
-        if (typeof value === "string") {
-          try {
-            return BigInt(value);
-          } catch {
-            return null;
-          }
-        }
-      }
-
-      if (
-        t === "string-ascii" ||
-        t === "string-utf8" ||
-        t === "principal" ||
-        t === "standard-principal" ||
-        t === "contract-principal"
-      ) {
-        return typeof value === "string" ? value : null;
-      }
-
-      if (t === "list") {
-        return Array.isArray(value) ? value.map(unwrapCvToValue) : null;
-      }
-    }
-  } 
- 
-  return null; 
-}; 
-
 export default function ClientPage() {
   const [walletAddress, setWalletAddress] = useState<string>("");
   const [status, setStatus] = useState<string>("Not connected");
   const [error, setError] = useState<string>("");
   const [streak, setStreak] = useState<number | null>(null);
-  const [lastClaimDay, setLastClaimDay] = useState<number | null>(null);
   const [lastClaimLabel, setLastClaimLabel] = useState<string>("—");
   const [hasBadge, setHasBadge] = useState<boolean | null>(null);
   const [badgeSupport, setBadgeSupport] = useState<"v1" | "v2" | null>(null);
@@ -170,7 +112,6 @@ export default function ClientPage() {
     Record<number, number | null>
   >({});
   const [milestones, setMilestones] = useState<number[] | null>(null);
-  const [badgeUris, setBadgeUris] = useState<Record<number, string | null>>({});
   const [adminOpen, setAdminOpen] = useState<boolean>(false);
   const [adminUnlocked, setAdminUnlocked] = useState<boolean>(false);
   const [adminTapCount, setAdminTapCount] = useState<number>(0);
@@ -181,7 +122,6 @@ export default function ClientPage() {
   const [adminFeeRecipient, setAdminFeeRecipient] = useState<string>("");
   const [adminBadgeKind, setAdminBadgeKind] = useState<string>("1");
   const [adminBadgeUri, setAdminBadgeUri] = useState<string>("");
-  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [collectibles, setCollectibles] = useState<OwnedCollectible[]>([]);
   const [collectiblesStatus, setCollectiblesStatus] = useState<
@@ -270,13 +210,6 @@ export default function ClientPage() {
     }
   };
 
-  const stacksApiBase =
-    STACKS_NETWORK === "mainnet"
-      ? "https://api.mainnet.hiro.so"
-      : "https://api.testnet.hiro.so";
-
-  const stacksCoreApiBaseUrl = stacksApiBase;
-
   const getOverrideForToken = useCallback(
     (tokenId: number, kind: number | null) => {
       const byToken = nftOverrides.byTokenId[String(tokenId)];
@@ -308,133 +241,29 @@ export default function ClientPage() {
     return null;
   }, []);
 
-  const loadOwnedCollectibles = useCallback(
-    async (principal: string) => {
-      if (!principal) {
-        setCollectibles([]);
-        setCollectiblesStatus("idle");
-        return;
-      }
+  type CollectibleTokenInfo = {
+    tokenId: number;
+    kind: number | null;
+    metadataUri: string | null;
+  };
 
-      const assetIdentifier = `${CONTRACT_ADDRESS}.${CONTRACT_NAME}::badge`;
+  const hydrateCollectiblesFromTokenInfo = useCallback(
+    async (tokenInfo: CollectibleTokenInfo[]) => {
       setCollectiblesStatus("loading");
-
       try {
-        const res = await fetch(
-          `${stacksApiBase}/extended/v1/tokens/nft/holdings?principal=${encodeURIComponent(
-            principal
-          )}&limit=200&offset=0`
-        );
-
-        if (!res.ok) throw new Error("holdings fetch failed");
-
-        const body: unknown = await res.json();
-        const results = Array.isArray((body as { results?: unknown }).results)
-          ? ((body as { results: unknown[] }).results as unknown[])
-          : [];
-
-        const tokenIds: number[] = [];
-        for (const row of results) {
-          const r = row as {
-            asset_identifier?: unknown;
-            value?: unknown;
-            token_id?: unknown;
-          };
-
-          if (r.asset_identifier !== assetIdentifier) continue;
-
-          const v = r.value ?? r.token_id;
-          let tokenId: number | null = null;
-
-          if (typeof v === "string") {
-            const m = v.match(/^u(\d+)$/);
-            if (m?.[1]) tokenId = Number(m[1]);
-            else if (/^\d+$/.test(v)) tokenId = Number(v);
-          } else if (typeof v === "object" && v !== null && "hex" in v) {
-            const hex = (v as { hex?: unknown }).hex;
-            if (typeof hex === "string") {
-              const cv = hexToCV(hex);
-              const val = cvToValue(cv) as unknown;
-              if (typeof val === "bigint") tokenId = Number(val);
-              else if (typeof val === "number") tokenId = val;
-            }
-          }
-
-          if (tokenId && Number.isFinite(tokenId)) tokenIds.push(tokenId);
-        }
-
-        if (tokenIds.length === 0) {
+        if (tokenInfo.length === 0) {
           setCollectibles([]);
           setCollectiblesStatus("loaded");
           return;
         }
 
-        const tokenInfo = await Promise.all(
-          tokenIds.map(async (tokenId) => {
-            const [kindCV, uriCV] = await Promise.all([
-              fetchCallReadOnlyFunction({
-                contractAddress: CONTRACT_ADDRESS,
-                contractName: CONTRACT_NAME,
-                functionName: "get-badge-kind",
-                functionArgs: [uintCV(tokenId)],
-                network: STACKS_NETWORK_OBJ,
-                client: { baseUrl: stacksApiBase },
-                senderAddress: CONTRACT_ADDRESS,
-              }),
-              fetchCallReadOnlyFunction({
-                contractAddress: CONTRACT_ADDRESS,
-                contractName: CONTRACT_NAME,
-                functionName: "get-token-uri",
-                functionArgs: [uintCV(tokenId)],
-                network: STACKS_NETWORK_OBJ,
-                client: { baseUrl: stacksApiBase },
-                senderAddress: CONTRACT_ADDRESS,
-              }),
-            ]);
-
-            const kindUnwrapped = unwrapCvToValue(cvToValue(kindCV) as unknown);
-            const kind =
-              kindUnwrapped === null
-                ? null
-                : typeof kindUnwrapped === "bigint"
-                  ? Number(kindUnwrapped)
-                  : typeof kindUnwrapped === "number"
-                    ? kindUnwrapped
-                    : null;
-
-            const uriUnwrapped = unwrapCvToValue(cvToValue(uriCV) as unknown);
-            const metadataUri = typeof uriUnwrapped === "string" ? uriUnwrapped : null;
-
-            return { tokenId, kind, metadataUri };
-          })
-        );
-
-        const badgeKinds = new Set<number>(BADGE_MILESTONES.map((m) => m.kind));
-        const badgeTokenIdSet = new Set<number>(
-          Object.values(badgeTokenIds)
-            .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
-        );
-        const badgeUriSet = new Set<string>(
-          Object.values(badgeUris)
-            .filter((v): v is string => typeof v === "string" && v.length > 0)
-        );
-
         const collectibleItems: OwnedCollectible[] = [];
         for (const info of tokenInfo) {
-          if (badgeTokenIdSet.has(info.tokenId)) continue;
-          if (info.kind !== null && badgeKinds.has(info.kind)) continue;
-          if (info.metadataUri && badgeUriSet.has(info.metadataUri)) continue;
-          if (info.kind === null) {
-            // If we can't resolve kind, treat it as non-badge but keep it safe in UI.
-          }
-
           const override = getOverrideForToken(info.tokenId, info.kind);
 
           let name =
             override?.name ||
-            (info.kind === null
-              ? `Token #${info.tokenId}`
-              : `Collectible u${info.kind}`);
+            (info.kind === null ? `Token #${info.tokenId}` : `Collectible u${info.kind}`);
           let imageUrl: string | null = null;
 
           if (info.metadataUri) {
@@ -494,96 +323,8 @@ export default function ClientPage() {
         setCollectiblesStatus("error");
       }
     },
-    [stacksApiBase, getOverrideForToken, resolveLocalNftImage, badgeTokenIds, badgeUris]
+    [getOverrideForToken, resolveLocalNftImage]
   );
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function resolveLastClaim() {
-      if (lastClaimDay === null) {
-        setLastClaimLabel("—");
-        return;
-      }
-
-      // Our contract defines day = floor(stacks-block-height / 144)
-      // Use the first block height in that day to anchor a real timestamp.
-      const height = lastClaimDay * 144;
-      try {
-        const res = await fetch(
-          `${stacksApiBase}/extended/v1/block/by_height/${height}`
-        );
-        if (!res.ok) throw new Error("bad response");
-        const body = (await res.json()) as unknown;
-
-        const burnTime =
-          typeof body === "object" && body !== null && "burn_block_time" in body
-            ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (body as any).burn_block_time
-            : null;
-
-        const seconds =
-          typeof burnTime === "number"
-            ? burnTime
-            : typeof burnTime === "string"
-            ? Number(burnTime)
-            : NaN;
-
-        if (!Number.isFinite(seconds)) throw new Error("missing time");
-
-        const date = new Date(seconds * 1000);
-        const iso = date.toISOString().slice(0, 10);
-        if (!cancelled) setLastClaimLabel(iso);
-      } catch {
-        if (!cancelled) setLastClaimLabel(`Day ${lastClaimDay}`);
-      }
-    }
-
-    resolveLastClaim();
-    return () => {
-      cancelled = true;
-    };
-  }, [lastClaimDay, stacksApiBase]);
-
-  const fetchContractOwner = useCallback(async () => {
-    // Pull `contract-owner` data-var via Stacks API since it's not exposed as a read-only.
-    try {
-      const res = await fetch(
-        `${stacksApiBase}/v2/data_var/${CONTRACT_ADDRESS}/${CONTRACT_NAME}/contract-owner`
-      );
-      if (!res.ok) return;
-      const body = (await res.json()) as unknown;
-
-      // Hiro returns `{ data: "0x..." }` (Clarity hex) for data-vars.
-      const data =
-        typeof body === "object" && body !== null && "data" in body
-          ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (body as any).data
-          : null;
-
-      if (typeof data === "string" && data.startsWith("0x")) {
-        const cv = hexToCV(data);
-        const val = cvToValue(cv) as unknown;
-        if (typeof val === "string" && (val.startsWith("SP") || val.startsWith("ST"))) {
-          setContractOwner(val);
-          return;
-        }
-      }
-
-      // Fallback for any other representation.
-      const repr =
-        typeof body === "object" && body !== null && "repr" in body
-          ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (body as any).repr
-          : null;
-      if (typeof repr === "string") {
-        const match = repr.match(/(SP|ST)[A-Z0-9]{20,}/);
-        if (match?.[0]) setContractOwner(match[0]);
-      }
-    } catch {
-      // ignore
-    }
-  }, [stacksApiBase]);
 
   const connectWallet = async () => {
     setError("");
@@ -619,374 +360,113 @@ export default function ClientPage() {
     }
   };
 
-  useEffect(() => {
-    fetchContractOwner();
-  }, [fetchContractOwner]);
-
   const disconnectWallet = async () => {
     disconnect();
     setWalletAddress("");
     setStatus("Not connected");
   };
 
-  const fetchOnChain = useCallback(async (senderOverride?: string) => {
-    if (
-      !(
-        CONTRACT_ADDRESS.startsWith("ST") ||
-        CONTRACT_ADDRESS.startsWith("SP")
-      )
-    ) {
-      setError(
-        "Set a valid contract address before fetching on-chain data (ST... or SP...)."
-      );
-      return;
-    }
+  type OnChainApiOk = {
+    ok: true;
+    cached: boolean;
+    fetchedAt: number;
+    data: {
+      contractOwner: string | null;
+      milestones: number[] | null;
+      badgeUris: Record<number, string | null>;
+      infernoFeeUstx: number | null;
+      infernoUri: string | null;
+      stormFeeUstx: number | null;
+      stormUri: string | null;
+      streak: number | null;
+      lastClaimDay: number | null;
+      lastClaimLabel: string;
+      badgeSupport: "v1" | "v2" | null;
+      hasBadge: boolean | null;
+      badgeStatus: Record<number, boolean>;
+      badgeTokenIds: Record<number, number | null>;
+      collectiblesTokenInfo: { tokenId: number; kind: number | null; metadataUri: string | null }[];
+    };
+  };
 
-    setIsLoading(true);
-    setError("");
+  type OnChainApiErr = { ok: false; error: string };
 
-    // `fetchCallReadOnlyFunction` expects `senderAddress` to be valid for the selected network.
-    // Use the contract address as the caller to avoid mainnet/testnet address mismatches.
-    const caller = CONTRACT_ADDRESS;
-
-    // `sender` here means the *user principal we want to query* (not the call's senderAddress).
-    // Only query per-user state when we actually have a connected address (or an override).
-    const sender = senderOverride || address;
-
-    try {
-      // Quick connectivity check (avoids opaque "Failed to fetch" errors).
-      try {
-        const controller = new AbortController();
-        const t = window.setTimeout(() => controller.abort(), 8000);
-        const res = await fetch(`${stacksCoreApiBaseUrl}/v2/info`, {
-          signal: controller.signal,
-        });
-        window.clearTimeout(t);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      } catch {
-        throw new Error(
-          `Cannot reach Stacks API (${STACKS_NETWORK}). Check your connection and disable adblock/firewall for ${stacksCoreApiBaseUrl}.`
-        );
+  const fetchOnChain = useCallback(
+    async (senderOverride?: string, opts?: { force?: boolean }) => {
+      if (!(CONTRACT_ADDRESS.startsWith("ST") || CONTRACT_ADDRESS.startsWith("SP"))) {
+        setError("Set a valid contract address before fetching on-chain data (ST... or SP...).");
+        return;
       }
 
-      if (sender) {
-        try {
-          const [streakCV, lastDayCV] = await Promise.all([
-            fetchCallReadOnlyFunction({
-              contractAddress: CONTRACT_ADDRESS,
-              contractName: CONTRACT_NAME,
-              functionName: "get-streak",
-              functionArgs: [principalCV(sender)],
-              network: STACKS_NETWORK_OBJ,
-              client: { baseUrl: stacksApiBase },
-              senderAddress: caller,
-            }),
-            fetchCallReadOnlyFunction({
-              contractAddress: CONTRACT_ADDRESS,
-              contractName: CONTRACT_NAME,
-              functionName: "get-last-claim-day",
-              functionArgs: [principalCV(sender)],
-              network: STACKS_NETWORK_OBJ,
-              client: { baseUrl: stacksApiBase },
-              senderAddress: caller,
-            }),
-          ]);
+      setError("");
 
-          const streakUnwrapped = unwrapCvToValue(cvToValue(streakCV) as unknown);
-          const lastDayUnwrapped = unwrapCvToValue(cvToValue(lastDayCV) as unknown);
+      const sender = (senderOverride || walletAddress || "").trim();
 
-          const toNum = (x: unknown) =>
-            x === null || x === undefined
-              ? null
-              : typeof x === "bigint"
-                ? Number(x)
-                : typeof x === "number"
-                  ? x
-                  : typeof x === "string"
-                    ? Number(x)
-                    : null;
-
-          setStreak(toNum(streakUnwrapped));
-          setLastClaimDay(toNum(lastDayUnwrapped));
-        } catch {
-          // Don't block global config (fees, milestones) just because the connected wallet
-          // is on a different network / has an address that doesn't match the contract network.
-          setStreak(null);
-          setLastClaimDay(null);
-        }
-      } else {
-        setStreak(null);
-        setLastClaimDay(null);
-      }
-
-      const loadV2Badges = async () => { 
-        if (!sender) {
-          setBadgeSupport(null);
-          setHasBadge(null);
-          setBadgeStatus({});
-          setBadgeTokenIds({});
-          return;
-        }
-        const kindsToCheck = Array.from(new Set(BADGE_MILESTONES.map((m) => m.kind))); 
-
-        const badgeChecks = await Promise.all(
-          kindsToCheck.map(async (kind) => {
-            const [hasCV, tokenCV] = await Promise.all([
-              fetchCallReadOnlyFunction({
-                contractAddress: CONTRACT_ADDRESS,
-                contractName: CONTRACT_NAME,
-                functionName: "has-badge-kind",
-                functionArgs: [principalCV(sender), uintCV(kind)],
-                network: STACKS_NETWORK_OBJ,
-                client: { baseUrl: stacksApiBase },
-                senderAddress: caller,
-              }),
-              fetchCallReadOnlyFunction({
-                contractAddress: CONTRACT_ADDRESS,
-                contractName: CONTRACT_NAME,
-                functionName: "get-badge-token-id",
-                functionArgs: [principalCV(sender), uintCV(kind)],
-                network: STACKS_NETWORK_OBJ,
-                client: { baseUrl: stacksApiBase },
-                senderAddress: caller,
-              }),
-            ]);
-            return {
-              kind,
-              has: Boolean(cvToValue(hasCV)),
-              token: cvToValue(tokenCV) as unknown,
-            };
-          })
-        );
-
-        const nextStatus: Record<number, boolean> = {};
-        const nextTokenIds: Record<number, number | null> = {};
-        for (const entry of badgeChecks) {
-          nextStatus[entry.kind] = entry.has;
-          if (entry.token === null) {
-            nextTokenIds[entry.kind] = null;
-          } else if (typeof entry.token === "bigint") {
-            nextTokenIds[entry.kind] = Number(entry.token);
-          } else if (typeof entry.token === "number") {
-            nextTokenIds[entry.kind] = entry.token;
-          } else {
-            nextTokenIds[entry.kind] = null;
-          }
-        }
-
-        setBadgeSupport("v2");
-        setBadgeStatus(nextStatus);
-        setBadgeTokenIds(nextTokenIds);
-        setHasBadge(Boolean(nextStatus[7]));
-      };
-
-      try { 
-        await loadV2Badges(); 
-      } catch { 
-        if (!sender) {
-          setBadgeSupport(null);
-          setHasBadge(null);
-          setBadgeStatus({});
-          setBadgeTokenIds({});
-          return;
-        }
-        try {
-          const badgeCV = await fetchCallReadOnlyFunction({
-            contractAddress: CONTRACT_ADDRESS,
-            contractName: CONTRACT_NAME,
-            functionName: "has-badge",
-            functionArgs: [principalCV(sender)],
-            network: STACKS_NETWORK_OBJ,
-            client: { baseUrl: stacksApiBase },
-            senderAddress: caller,
-          });
-          const badgeValue = cvToValue(badgeCV) as unknown;
-          setBadgeSupport("v1");
-          setHasBadge(Boolean(badgeValue));
-          setBadgeStatus({ 7: Boolean(badgeValue) });
-          setBadgeTokenIds({});
-        } catch {
-          setBadgeSupport(null);
-          setHasBadge(null);
-          setBadgeStatus({});
-          setBadgeTokenIds({});
-        }
-      } 
-
-      // Admin/config reads should not be all-or-nothing. Older contracts might not
-      // expose every endpoint; prices should still load when possible.
       try {
-        const milestonesCV = await fetchCallReadOnlyFunction({
-          contractAddress: CONTRACT_ADDRESS,
-          contractName: CONTRACT_NAME,
-          functionName: "get-milestones",
-          functionArgs: [],
-          network: STACKS_NETWORK_OBJ,
-          client: { baseUrl: stacksApiBase },
-          senderAddress: caller,
-        });
+        const url = new URL("/api/onchain", window.location.origin);
+        if (sender) url.searchParams.set("sender", sender);
+        if (opts?.force) url.searchParams.set("force", "1");
 
-        const ms = unwrapCvToValue(cvToValue(milestonesCV) as unknown);
-        if (Array.isArray(ms)) {
-          const parsed = ms
-            .map((v) => {
-              if (typeof v === "bigint") return Number(v);
-              if (typeof v === "number") return v;
-              if (typeof v === "string") return Number(v);
-              return NaN;
-            })
-            .filter((v) => Number.isFinite(v) && v > 0);
-          setMilestones(parsed);
-          setAdminMilestones(parsed.join(","));
+        const res = await fetch(url.toString());
+        const body = (await res.json()) as unknown;
+
+        if (!res.ok) {
+          const msg =
+            typeof body === "object" && body !== null && "error" in body
+              ? String((body as { error?: unknown }).error ?? `HTTP ${res.status}`)
+              : `HTTP ${res.status}`;
+          throw new Error(msg);
+        }
+
+        const parsed = body as OnChainApiOk | OnChainApiErr;
+        if (!parsed || typeof parsed !== "object" || !("ok" in parsed)) {
+          throw new Error("Invalid on-chain response");
+        }
+        if (!parsed.ok) {
+          throw new Error(parsed.error || "On-chain request failed");
+        }
+
+        const d = parsed.data;
+
+        setContractOwner(d.contractOwner);
+        setMilestones(d.milestones);
+        if (Array.isArray(d.milestones) && d.milestones.length > 0) {
+          setAdminMilestones(d.milestones.join(","));
+        }
+
+        setInfernoFeeUstx(d.infernoFeeUstx);
+        setInfernoUri(d.infernoUri);
+        setStormFeeUstx(d.stormFeeUstx);
+        setStormUri(d.stormUri);
+
+        setStreak(d.streak);
+        setLastClaimLabel(typeof d.lastClaimLabel === "string" ? d.lastClaimLabel : "—");
+
+        setBadgeSupport(d.badgeSupport);
+        setHasBadge(d.hasBadge);
+        setBadgeStatus(d.badgeStatus ?? {});
+        setBadgeTokenIds(d.badgeTokenIds ?? {});
+
+        if (sender) {
+          await hydrateCollectiblesFromTokenInfo(d.collectiblesTokenInfo ?? []);
         } else {
-          setMilestones(null);
+          setCollectibles([]);
+          setCollectiblesStatus("idle");
         }
-      } catch {
-        setMilestones(null);
+
+        setStatus(parsed.cached ? "On-chain data loaded" : "On-chain data updated");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        setError(`Failed to load on-chain data: ${message}`);
       }
-
-      try {
-        const infernoFeeCV = await fetchCallReadOnlyFunction({
-          contractAddress: CONTRACT_ADDRESS,
-          contractName: CONTRACT_NAME,
-          functionName: "get-mint-fee-kind",
-          functionArgs: [uintCV(INFERNO_PULSE.kind)],
-          network: STACKS_NETWORK_OBJ,
-          client: { baseUrl: stacksApiBase },
-          senderAddress: caller,
-        });
-        const feeUnwrapped = unwrapCvToValue(cvToValue(infernoFeeCV) as unknown);
-        const fee =
-          feeUnwrapped === null
-            ? null
-            : typeof feeUnwrapped === "bigint"
-              ? Number(feeUnwrapped)
-              : typeof feeUnwrapped === "number"
-                ? feeUnwrapped
-                : null;
-        setInfernoFeeUstx(fee);
-      } catch {
-        setInfernoFeeUstx(null);
-      }
-
-      try {
-        const infernoUriCV = await fetchCallReadOnlyFunction({
-          contractAddress: CONTRACT_ADDRESS,
-          contractName: CONTRACT_NAME,
-          functionName: "get-badge-uri",
-          functionArgs: [uintCV(INFERNO_PULSE.kind)],
-          network: STACKS_NETWORK_OBJ,
-          client: { baseUrl: stacksApiBase },
-          senderAddress: caller,
-        });
-        const uriUnwrapped = unwrapCvToValue(cvToValue(infernoUriCV) as unknown);
-        setInfernoUri(typeof uriUnwrapped === "string" ? uriUnwrapped : null);
-      } catch {
-        setInfernoUri(null);
-      }
-
-      try {
-        const stormFeeCV = await fetchCallReadOnlyFunction({
-          contractAddress: CONTRACT_ADDRESS,
-          contractName: CONTRACT_NAME,
-          functionName: "get-mint-fee-kind",
-          functionArgs: [uintCV(STORM_ASSASIN.kind)],
-          network: STACKS_NETWORK_OBJ,
-          client: { baseUrl: stacksApiBase },
-          senderAddress: caller,
-        });
-        const stormFeeUnwrapped = unwrapCvToValue(cvToValue(stormFeeCV) as unknown);
-        const stormFee =
-          stormFeeUnwrapped === null
-            ? null
-            : typeof stormFeeUnwrapped === "bigint"
-              ? Number(stormFeeUnwrapped)
-              : typeof stormFeeUnwrapped === "number"
-                ? stormFeeUnwrapped
-                : null;
-        setStormFeeUstx(stormFee);
-      } catch {
-        setStormFeeUstx(null);
-      }
-
-      try {
-        const stormUriCV = await fetchCallReadOnlyFunction({
-          contractAddress: CONTRACT_ADDRESS,
-          contractName: CONTRACT_NAME,
-          functionName: "get-badge-uri",
-          functionArgs: [uintCV(STORM_ASSASIN.kind)],
-          network: STACKS_NETWORK_OBJ,
-          client: { baseUrl: stacksApiBase },
-          senderAddress: caller,
-        });
-        const stormUriUnwrapped = unwrapCvToValue(cvToValue(stormUriCV) as unknown);
-        setStormUri(typeof stormUriUnwrapped === "string" ? stormUriUnwrapped : null);
-      } catch {
-        setStormUri(null);
-      }
-
-      try {
-        const kindsToLoad = BADGE_MILESTONES.map((m) => m.kind);
-        const uriPairs = await Promise.all(
-          kindsToLoad.map(async (kind) => {
-            const v = await fetchCallReadOnlyFunction({
-              contractAddress: CONTRACT_ADDRESS,
-              contractName: CONTRACT_NAME,
-              functionName: "get-badge-uri",
-              functionArgs: [uintCV(kind)],
-              network: STACKS_NETWORK_OBJ,
-              client: { baseUrl: stacksApiBase },
-              senderAddress: caller,
-            });
-            const u = unwrapCvToValue(cvToValue(v) as unknown);
-            return [kind, typeof u === "string" ? u : null] as const;
-          })
-        );
-        const nextMap: Record<number, string | null> = {};
-        for (const [k, u] of uriPairs) nextMap[k] = u;
-        setBadgeUris(nextMap);
-      } catch {
-        // ignore
-      }
-
-      const ownedSender = senderOverride || address;
-      if (ownedSender) { 
-        await loadOwnedCollectibles(ownedSender); 
-      } else { 
-        setCollectibles([]); 
-        setCollectiblesStatus("idle"); 
-      } 
-
-      setStatus("On-chain data refreshed");
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : typeof err === "string"
-            ? err
-            : "Unknown error";
-
-      const walletNet = walletAddress.startsWith("SP")
-        ? "mainnet"
-        : walletAddress.startsWith("ST")
-          ? "testnet"
-          : null;
-
-      const networkHint =
-        walletNet && walletNet !== STACKS_NETWORK
-          ? ` (Wallet is ${walletNet}, contract is ${STACKS_NETWORK}. Switch Leather network/account.)`
-          : "";
-
-      setError(`Failed to fetch on-chain data: ${message}${networkHint}`);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [address, loadOwnedCollectibles, stacksApiBase, stacksCoreApiBaseUrl, walletAddress]); 
+    },
+    [hydrateCollectiblesFromTokenInfo, walletAddress]
+  );
 
   const scheduleRefresh = useCallback(
     (senderOverride?: string) => {
       // Most transactions won't reflect immediately; refresh a couple times.
-      setTimeout(() => fetchOnChain(senderOverride), 6_000);
+      setTimeout(() => fetchOnChain(senderOverride, { force: true }), 6_000);
       setTimeout(() => fetchOnChain(senderOverride), 18_000);
     },
     [fetchOnChain]
@@ -1212,9 +692,7 @@ export default function ClientPage() {
   };
 
   useEffect(() => {
-    if (address) {
-      fetchOnChain();
-    }
+    fetchOnChain(address || undefined);
   }, [address, fetchOnChain]);
 
   const claimStreak = async () => {
@@ -1281,7 +759,7 @@ export default function ClientPage() {
       return;
     }
     if (infernoFeeUstx === null) {
-      setError("Price not loaded yet. Click “Refresh On-Chain” and try again.");
+      setError("Price not loaded yet. Try again in a moment.");
       return;
     }
 
@@ -1320,7 +798,7 @@ export default function ClientPage() {
       return;
     }
     if (stormFeeUstx === null) {
-      setError("Price not loaded yet. Click “Refresh On-Chain” and try again.");
+      setError("Price not loaded yet. Try again in a moment.");
       return;
     }
 
@@ -1395,11 +873,18 @@ export default function ClientPage() {
               <>
                 <button
                   className={`${styles.button} ${styles.ghostButton} ${styles.walletButton}`}
-                  onClick={() => fetchOnChain()}
+                  onClick={() => {
+                    const chain = STACKS_NETWORK === "mainnet" ? "mainnet" : "testnet";
+                    window.open(
+                      `https://explorer.hiro.so/address/${address}?chain=${chain}`,
+                      "_blank",
+                      "noopener,noreferrer"
+                    );
+                  }}
                   type="button"
                 >
                   <span className={styles.walletMain}>{shortAddress}</span>
-                  <span className={styles.walletSub}>View on-chain</span>
+                  <span className={styles.walletSub}>View in explorer</span>
                 </button>
                 <button
                   className={`${styles.button} ${styles.ghostButton}`}
@@ -1439,13 +924,6 @@ export default function ClientPage() {
             <div className={styles.heroActions}>
               <button className={styles.button} onClick={claimStreak}>
                 Claim Now
-              </button>
-              <button
-                className={`${styles.button} ${styles.ghostButton}`}
-                onClick={() => fetchOnChain()}
-                disabled={isLoading}
-              >
-                {isLoading ? "Refreshing..." : "Refresh On-Chain"}
               </button>
             </div>
             <div className={styles.statsRow}>
@@ -1685,7 +1163,7 @@ export default function ClientPage() {
                 <div className={styles.emptyState}>
                   <div className={styles.emptyTitle}>Couldn’t load NFTs.</div>
                   <div className={styles.emptyBody}>
-                    Try “Refresh On-Chain” again in a moment.
+                    Try again in a moment.
                   </div>
                 </div>
               ) : collectibles.length === 0 ? (

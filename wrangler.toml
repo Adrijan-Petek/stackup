@@ -2,3 +2,8 @@ name = "stackup"
 compatibility_date = "2026-02-05"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "out"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "stackup"
+database_id = "3e098620-9bda-4547-ac54-8a0759f5a91e"
