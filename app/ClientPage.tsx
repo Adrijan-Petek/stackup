@@ -47,6 +47,21 @@ const BADGE_ASSETS: Record<number, string> = {
   30: "/badges/30-day-streak.png",
 };
 
+type OwnedCollectible = {
+  tokenId: number;
+  kind: number | null;
+  name: string;
+  imageUrl: string | null;
+  metadataUri: string | null;
+};
+
+const ipfsToHttps = (uri: string) => {
+  if (uri.startsWith("ipfs://")) {
+    return `https://ipfs.io/ipfs/${uri.slice("ipfs://".length)}`;
+  }
+  return uri;
+};
+
 export default function ClientPage() {
   const [walletAddress, setWalletAddress] = useState<string>("");
   const [status, setStatus] = useState<string>("Not connected");
@@ -73,6 +88,10 @@ export default function ClientPage() {
   const [adminBadgeUri, setAdminBadgeUri] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [collectibles, setCollectibles] = useState<OwnedCollectible[]>([]);
+  const [collectiblesStatus, setCollectiblesStatus] = useState<
+    "idle" | "loading" | "loaded" | "error"
+  >("idle");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -124,6 +143,148 @@ export default function ClientPage() {
     STACKS_NETWORK === "mainnet"
       ? "https://api.mainnet.hiro.so"
       : "https://api.testnet.hiro.so";
+
+  const loadOwnedCollectibles = useCallback(
+    async (principal: string) => {
+      if (!principal) {
+        setCollectibles([]);
+        setCollectiblesStatus("idle");
+        return;
+      }
+
+      const assetIdentifier = `${CONTRACT_ADDRESS}.${CONTRACT_NAME}::badge`;
+      setCollectiblesStatus("loading");
+
+      try {
+        const res = await fetch(
+          `${stacksApiBase}/extended/v1/tokens/nft/holdings?principal=${encodeURIComponent(
+            principal
+          )}&limit=200&offset=0`
+        );
+
+        if (!res.ok) throw new Error("holdings fetch failed");
+
+        const body: unknown = await res.json();
+        const results = Array.isArray((body as { results?: unknown }).results)
+          ? ((body as { results: unknown[] }).results as unknown[])
+          : [];
+
+        const tokenIds: number[] = [];
+        for (const row of results) {
+          const r = row as {
+            asset_identifier?: unknown;
+            value?: unknown;
+            token_id?: unknown;
+          };
+
+          if (r.asset_identifier !== assetIdentifier) continue;
+
+          const v = r.value ?? r.token_id;
+          let tokenId: number | null = null;
+
+          if (typeof v === "string") {
+            const m = v.match(/^u(\d+)$/);
+            if (m?.[1]) tokenId = Number(m[1]);
+            else if (/^\d+$/.test(v)) tokenId = Number(v);
+          } else if (typeof v === "object" && v !== null && "hex" in v) {
+            const hex = (v as { hex?: unknown }).hex;
+            if (typeof hex === "string") {
+              const cv = hexToCV(hex);
+              const val = cvToValue(cv) as unknown;
+              if (typeof val === "bigint") tokenId = Number(val);
+              else if (typeof val === "number") tokenId = val;
+            }
+          }
+
+          if (tokenId && Number.isFinite(tokenId)) tokenIds.push(tokenId);
+        }
+
+        if (tokenIds.length === 0) {
+          setCollectibles([]);
+          setCollectiblesStatus("loaded");
+          return;
+        }
+
+        const tokenInfo = await Promise.all(
+          tokenIds.map(async (tokenId) => {
+            const [kindCV, uriCV] = await Promise.all([
+              fetchCallReadOnlyFunction({
+                contractAddress: CONTRACT_ADDRESS,
+                contractName: CONTRACT_NAME,
+                functionName: "get-badge-kind",
+                functionArgs: [uintCV(tokenId)],
+                network: STACKS_NETWORK_OBJ,
+                senderAddress: principal,
+              }),
+              fetchCallReadOnlyFunction({
+                contractAddress: CONTRACT_ADDRESS,
+                contractName: CONTRACT_NAME,
+                functionName: "get-token-uri",
+                functionArgs: [uintCV(tokenId)],
+                network: STACKS_NETWORK_OBJ,
+                senderAddress: principal,
+              }),
+            ]);
+
+            const kindVal = cvToValue(kindCV) as unknown;
+            const kind =
+              kindVal === null
+                ? null
+                : typeof kindVal === "bigint"
+                  ? Number(kindVal)
+                  : Number(kindVal);
+
+            const uriVal = cvToValue(uriCV) as unknown;
+            const metadataUri = typeof uriVal === "string" ? uriVal : null;
+
+            return { tokenId, kind, metadataUri };
+          })
+        );
+
+        const badgeKinds = new Set<number>(BADGE_MILESTONES.map((m) => m.kind));
+
+        const collectibleItems: OwnedCollectible[] = [];
+        for (const info of tokenInfo) {
+          if (info.kind !== null && badgeKinds.has(info.kind)) continue;
+
+          let name = info.kind === null ? `Token #${info.tokenId}` : `Kind ${info.kind}`;
+          let imageUrl: string | null = null;
+
+          if (info.metadataUri) {
+            try {
+              const mRes = await fetch(ipfsToHttps(info.metadataUri));
+              if (mRes.ok) {
+                const meta: unknown = await mRes.json();
+                const metaObj = meta as { name?: unknown; image?: unknown };
+                if (typeof metaObj.name === "string") name = metaObj.name;
+                if (typeof metaObj.image === "string") {
+                  imageUrl = ipfsToHttps(metaObj.image);
+                }
+              }
+            } catch {
+              // ignore metadata failures
+            }
+          }
+
+          collectibleItems.push({
+            tokenId: info.tokenId,
+            kind: info.kind,
+            name,
+            imageUrl,
+            metadataUri: info.metadataUri,
+          });
+        }
+
+        collectibleItems.sort((a, b) => b.tokenId - a.tokenId);
+        setCollectibles(collectibleItems);
+        setCollectiblesStatus("loaded");
+      } catch {
+        setCollectibles([]);
+        setCollectiblesStatus("error");
+      }
+    },
+    [stacksApiBase]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -406,13 +567,20 @@ export default function ClientPage() {
         setMilestones(null);
       }
 
+      if (senderOverride || address) {
+        await loadOwnedCollectibles(sender);
+      } else {
+        setCollectibles([]);
+        setCollectiblesStatus("idle");
+      }
+
       setStatus("On-chain data refreshed");
     } catch {
       setError("Failed to fetch on-chain data.");
     } finally {
       setIsLoading(false);
     }
-  }, [address]);
+  }, [address, loadOwnedCollectibles]);
 
   const scheduleRefresh = useCallback(
     (senderOverride?: string) => {
@@ -887,22 +1055,80 @@ export default function ClientPage() {
               <div className={styles.panelTitleBlock}>
                 <h2>NFTs</h2>
                 <div className={styles.panelSubtitle}>
-                  Creator drops and paid mints will live here.
+                  Your owned collectibles.
                 </div>
               </div>
-              <span className={styles.pill}>Soon</span>
+              <span className={styles.pill}>Owned</span>
             </div>
             <div className={styles.stack}>
-              <div className={styles.emptyState}>
-                <div className={styles.emptyTitle}>No drops yet.</div>
-                <div className={styles.emptyBody}>
-                  We’ll add paid collectibles in a separate, cleaner flow.
+              {!address ? (
+                <div className={styles.emptyState}>
+                  <div className={styles.emptyTitle}>Connect to view NFTs.</div>
+                  <div className={styles.emptyBody}>
+                    We’ll show any collectibles you own from this contract.
+                  </div>
                 </div>
-              </div>
-              <div className={styles.footnote}>
-                Tip: the admin panel is hidden behind <strong>7 taps</strong> on the
-                logo (owner-only).
-              </div>
+              ) : collectiblesStatus === "loading" ? (
+                <div className={styles.emptyState}>
+                  <div className={styles.emptyTitle}>Loading NFTs…</div>
+                  <div className={styles.emptyBody}>Fetching your holdings.</div>
+                </div>
+              ) : collectiblesStatus === "error" ? (
+                <div className={styles.emptyState}>
+                  <div className={styles.emptyTitle}>Couldn’t load NFTs.</div>
+                  <div className={styles.emptyBody}>
+                    Try “Refresh On-Chain” again in a moment.
+                  </div>
+                </div>
+              ) : collectibles.length === 0 ? (
+                <div className={styles.emptyState}>
+                  <div className={styles.emptyTitle}>No NFTs yet.</div>
+                  <div className={styles.emptyBody}>
+                    When you mint paid collectibles, they’ll appear here.
+                  </div>
+                </div>
+              ) : (
+                <div className={styles.badgeGrid}>
+                  {collectibles.map((nft) => (
+                    <div key={nft.tokenId} className={styles.badgeCard}>
+                      <div className={styles.badgeThumb}>
+                        {nft.imageUrl ? (
+                          <Image
+                            src={nft.imageUrl}
+                            alt={nft.name}
+                            width={112}
+                            height={112}
+                            unoptimized
+                            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                          />
+                        ) : (
+                          <div className={styles.thumbPlaceholder} />
+                        )}
+                      </div>
+                      <div className={styles.badgeMeta}>
+                        <div className={styles.badgeTitle}>
+                          <strong>{nft.name}</strong>
+                        </div>
+                        <div className={styles.badgeLine}>
+                          Token <code>u{nft.tokenId}</code>
+                          {nft.kind !== null ? (
+                            <>
+                              {" · "}Kind <code>u{nft.kind}</code>
+                            </>
+                          ) : null}
+                        </div>
+                        {nft.metadataUri ? (
+                          <div className={styles.badgeLine}>
+                            URI <code>{nft.metadataUri}</code>
+                          </div>
+                        ) : (
+                          <div className={styles.badgeLine}>URI not set</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </section>

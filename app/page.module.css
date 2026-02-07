@@ -494,6 +494,27 @@
   overflow: hidden;
 }
 
+[data-theme="light"] .badgeThumb {
+  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.thumbPlaceholder {
+  width: 100%;
+  height: 100%;
+  background:
+    radial-gradient(40px 40px at 30% 30%, rgba(122, 255, 214, 0.25), transparent 60%),
+    radial-gradient(46px 46px at 70% 70%, rgba(122, 255, 214, 0.12), transparent 62%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+[data-theme="light"] .thumbPlaceholder {
+  background:
+    radial-gradient(40px 40px at 30% 30%, rgba(16, 167, 126, 0.22), transparent 60%),
+    radial-gradient(46px 46px at 70% 70%, rgba(16, 167, 126, 0.12), transparent 62%),
+    linear-gradient(135deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.01));
+}
+
 .badge {
   padding: 10px 14px;
   border-radius: 16px;
