@@ -62,6 +62,18 @@ const INFERNO_PULSE = {
   name: "StackUp: Inferno Pulse",
 } as const;
 
+type NftOverrideEntry = {
+  name?: string;
+  image?: string; // /public path or ipfs://...
+};
+
+type NftOverrides = {
+  byTokenId: Record<string, NftOverrideEntry>;
+  byKind: Record<string, NftOverrideEntry>;
+};
+
+const NFT_OVERRIDES_STORAGE_KEY = "stackup_nft_overrides_v1";
+
 const ipfsToHttpsCandidates = (uri: string) => {
   if (!uri.startsWith("ipfs://")) return [uri];
   const cid = uri.slice("ipfs://".length);
@@ -102,10 +114,42 @@ export default function ClientPage() {
   const [collectiblesStatus, setCollectiblesStatus] = useState<
     "idle" | "loading" | "loaded" | "error"
   >("idle");
+  const [nftOverrides, setNftOverrides] = useState<NftOverrides>({
+    byTokenId: {},
+    byKind: {},
+  });
+  const [adminNftMode, setAdminNftMode] = useState<"token" | "kind">("token");
+  const [adminNftId, setAdminNftId] = useState<string>("101");
+  const [adminNftName, setAdminNftName] = useState<string>("");
+  const [adminNftImage, setAdminNftImage] = useState<string>("/nfts/");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(NFT_OVERRIDES_STORAGE_KEY);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== "object" || parsed === null) return;
+      const obj = parsed as Partial<NftOverrides>;
+      setNftOverrides({
+        byTokenId: typeof obj.byTokenId === "object" && obj.byTokenId ? (obj.byTokenId as Record<string, NftOverrideEntry>) : {},
+        byKind: typeof obj.byKind === "object" && obj.byKind ? (obj.byKind as Record<string, NftOverrideEntry>) : {},
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NFT_OVERRIDES_STORAGE_KEY, JSON.stringify(nftOverrides));
+    } catch {
+      // ignore
+    }
+  }, [nftOverrides]);
 
   useEffect(() => {
     const storedAddress = localStorage.getItem("stackup_wallet_address");
@@ -153,6 +197,37 @@ export default function ClientPage() {
     STACKS_NETWORK === "mainnet"
       ? "https://api.mainnet.hiro.so"
       : "https://api.testnet.hiro.so";
+
+  const getOverrideForToken = useCallback(
+    (tokenId: number, kind: number | null) => {
+      const byToken = nftOverrides.byTokenId[String(tokenId)];
+      if (byToken) return byToken;
+      if (kind !== null) {
+        const byKind = nftOverrides.byKind[String(kind)];
+        if (byKind) return byKind;
+      }
+      return null;
+    },
+    [nftOverrides]
+  );
+
+  const resolveLocalNftImage = useCallback(async (tokenId: number, kind: number | null) => {
+    const candidates: string[] = [];
+    if (kind !== null) candidates.push(`/nfts/kind-${kind}.png`);
+    candidates.push(`/nfts/token-${tokenId}.png`);
+    // legacy/manual naming pattern (common during early drops)
+    candidates.push(`/nfts/${tokenId}.png`);
+
+    for (const path of candidates) {
+      try {
+        const res = await fetch(path, { method: "HEAD" });
+        if (res.ok) return path;
+      } catch {
+        // ignore
+      }
+    }
+    return null;
+  }, []);
 
   const loadOwnedCollectibles = useCallback(
     async (principal: string) => {
@@ -257,7 +332,13 @@ export default function ClientPage() {
         for (const info of tokenInfo) {
           if (info.kind !== null && badgeKinds.has(info.kind)) continue;
 
-          let name = info.kind === null ? `Token #${info.tokenId}` : `Kind ${info.kind}`;
+          const override = getOverrideForToken(info.tokenId, info.kind);
+
+          let name =
+            override?.name ||
+            (info.kind === null
+              ? `Token #${info.tokenId}`
+              : `Collectible u${info.kind}`);
           let imageUrl: string | null = null;
 
           if (info.metadataUri) {
@@ -288,6 +369,18 @@ export default function ClientPage() {
             }
           }
 
+          if (override?.image) {
+            if (override.image.startsWith("ipfs://")) {
+              imageUrl = ipfsToHttpsCandidates(override.image)[0] ?? null;
+            } else {
+              imageUrl = override.image;
+            }
+          }
+
+          if (!imageUrl) {
+            imageUrl = await resolveLocalNftImage(info.tokenId, info.kind);
+          }
+
           collectibleItems.push({
             tokenId: info.tokenId,
             kind: info.kind,
@@ -305,7 +398,7 @@ export default function ClientPage() {
         setCollectiblesStatus("error");
       }
     },
-    [stacksApiBase]
+    [stacksApiBase, getOverrideForToken, resolveLocalNftImage]
   );
 
   useEffect(() => {
@@ -781,6 +874,55 @@ export default function ClientPage() {
       setError("Failed to open badge URI transaction.");
       setStatus("Badge URI failed");
     }
+  };
+
+  const upsertNftOverride = () => {
+    const id = Number(adminNftId);
+    if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) {
+      setStatus("Invalid ID");
+      return;
+    }
+
+    const entry: NftOverrideEntry = {};
+    if (adminNftName.trim()) entry.name = adminNftName.trim();
+    if (adminNftImage.trim()) entry.image = adminNftImage.trim();
+
+    setNftOverrides((prev) => {
+      const next: NftOverrides = {
+        byTokenId: { ...prev.byTokenId },
+        byKind: { ...prev.byKind },
+      };
+      if (adminNftMode === "token") next.byTokenId[String(id)] = entry;
+      else next.byKind[String(id)] = entry;
+      return next;
+    });
+
+    setStatus("NFT override saved");
+  };
+
+  const removeNftOverride = () => {
+    const id = Number(adminNftId);
+    if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) {
+      setStatus("Invalid ID");
+      return;
+    }
+
+    setNftOverrides((prev) => {
+      const next: NftOverrides = {
+        byTokenId: { ...prev.byTokenId },
+        byKind: { ...prev.byKind },
+      };
+      if (adminNftMode === "token") delete next.byTokenId[String(id)];
+      else delete next.byKind[String(id)];
+      return next;
+    });
+
+    setStatus("NFT override removed");
+  };
+
+  const clearNftOverrides = () => {
+    setNftOverrides({ byTokenId: {}, byKind: {} });
+    setStatus("NFT overrides cleared");
   };
 
   useEffect(() => {
@@ -1306,6 +1448,67 @@ export default function ClientPage() {
                     <div className={styles.footnote}>
                       Owner-only. If you aren{"'"}t the contract owner, these calls will
                       fail on-chain.
+                    </div>
+                  </div>
+
+                  <div className={styles.adminSection}>
+                    <div className={styles.adminTitle}>NFT Images (Instant)</div>
+                    <div className={styles.adminRow}>
+                      <select
+                        className={styles.select}
+                        value={adminNftMode}
+                        onChange={(e) =>
+                          setAdminNftMode(e.target.value === "kind" ? "kind" : "token")
+                        }
+                      >
+                        <option value="token">Token ID</option>
+                        <option value="kind">Kind</option>
+                      </select>
+                      <input
+                        className={styles.input}
+                        inputMode="numeric"
+                        placeholder="id (e.g. 101)"
+                        value={adminNftId}
+                        onChange={(e) => setAdminNftId(e.target.value)}
+                      />
+                    </div>
+                    <div className={styles.adminRow}>
+                      <input
+                        className={styles.input}
+                        placeholder="name (optional)"
+                        value={adminNftName}
+                        onChange={(e) => setAdminNftName(e.target.value)}
+                      />
+                      <input
+                        className={styles.input}
+                        placeholder="image (/nfts/xxx.png or ipfs://...)"
+                        value={adminNftImage}
+                        onChange={(e) => setAdminNftImage(e.target.value)}
+                      />
+                    </div>
+                    <div className={styles.adminRow}>
+                      <button className={styles.button} onClick={upsertNftOverride}>
+                        Save
+                      </button>
+                      <button
+                        className={`${styles.button} ${styles.ghostButton}`}
+                        onClick={removeNftOverride}
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                      <button
+                        className={`${styles.button} ${styles.ghostButton}`}
+                        onClick={clearNftOverrides}
+                        type="button"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                    <div className={styles.footnote}>
+                      Put images in <code>public/nfts/</code>. If IPFS is slow, the app
+                      will also auto-try <code>/nfts/token-101.png</code> and{" "}
+                      <code>/nfts/kind-777.png</code>.
                     </div>
                   </div>
                 </div>
