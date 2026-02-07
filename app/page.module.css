@@ -854,12 +854,6 @@
   }
 }
 
-@media (max-width: 420px) {
-  .nftGrid {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 980px) {
   .panelGrid {
     grid-template-columns: 1fr;
