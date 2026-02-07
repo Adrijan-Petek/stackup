@@ -1370,10 +1370,10 @@ export default function ClientPage() {
                         : `Price: ${(infernoFeeUstx / 1_000_000).toFixed(2)} STX`}
                     </div>
                     <div className={styles.dropLine}>
-                      URI{" "}
-                      <code>
-                        {infernoUri ? infernoUri : "not set"}
-                      </code>
+                      Metadata:{" "}
+                      <span>
+                        {infernoUri ? "Configured" : "Not configured"}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1416,16 +1416,16 @@ export default function ClientPage() {
                   </div>
                 </div>
               ) : (
-                <div className={styles.badgeGrid}>
+                <div className={styles.nftGrid}>
                   {collectibles.map((nft) => (
-                    <div key={nft.tokenId} className={styles.badgeCard}>
-                      <div className={styles.badgeThumb}>
+                    <div key={nft.tokenId} className={styles.nftCard}>
+                      <div className={styles.nftThumb}>
                         {nft.imageUrl ? (
                           <Image
                             src={nft.imageUrl}
                             alt={nft.name}
-                            width={112}
-                            height={112}
+                            width={320}
+                            height={320}
                             unoptimized
                             style={{ width: "100%", height: "100%", objectFit: "contain" }}
                           />
@@ -1433,25 +1433,22 @@ export default function ClientPage() {
                           <div className={styles.thumbPlaceholder} />
                         )}
                       </div>
-                      <div className={styles.badgeMeta}>
-                        <div className={styles.badgeTitle}>
+                      <div className={styles.nftMeta}>
+                        <div className={styles.nftTitle}>
                           <strong>{nft.name}</strong>
                         </div>
-                        <div className={styles.badgeLine}>
-                          Token <code>u{nft.tokenId}</code>
+                        <div className={styles.nftLine}>
+                          Token <code>#{nft.tokenId}</code>
                           {nft.kind !== null ? (
                             <>
                               {" · "}Kind <code>u{nft.kind}</code>
                             </>
                           ) : null}
                         </div>
-                        {nft.metadataUri ? (
-                          <div className={styles.badgeLine}>
-                            URI <code>{nft.metadataUri}</code>
-                          </div>
-                        ) : (
-                          <div className={styles.badgeLine}>URI not set</div>
-                        )}
+                        <div className={styles.nftLine}>
+                          Metadata:{" "}
+                          <span>{nft.metadataUri ? "Configured" : "Not configured"}</span>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1490,9 +1487,7 @@ export default function ClientPage() {
               <div className={styles.modalHeader}>
                 <div>
                   <div className={styles.modalTitle}>Admin</div>
-                  <div className={styles.modalSub}>
-                    Owner-only controls. Tap the logo 7 times to open this panel.
-                  </div>
+                  <div className={styles.modalSub}>Owner-only controls.</div>
                 </div>
                 <button
                   className={`${styles.button} ${styles.ghostButton}`}
