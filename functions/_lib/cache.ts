@@ -9,15 +9,50 @@ export type D1DatabaseLike = {
 
 type CacheRow = { value: string; expires_at: number };
 
+async function ensureCacheTable(db: D1DatabaseLike): Promise<void> {
+  await db
+    .prepare(
+      "CREATE TABLE IF NOT EXISTS kv_cache (" +
+        "key TEXT PRIMARY KEY, " +
+        "value TEXT NOT NULL, " +
+        "updated_at INTEGER NOT NULL, " +
+        "expires_at INTEGER NOT NULL" +
+        ")"
+    )
+    .bind()
+    .run();
+
+  await db
+    .prepare("CREATE INDEX IF NOT EXISTS kv_cache_expires_at ON kv_cache (expires_at)")
+    .bind()
+    .run();
+}
+
+function isMissingTableError(err: unknown): boolean {
+  const msg =
+    err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return msg.includes("no such table: kv_cache");
+}
+
 export async function getCacheJson<T>(
   db: D1DatabaseLike,
   key: string
 ): Promise<{ hit: true; value: T } | { hit: false }> {
   const now = Math.floor(Date.now() / 1000);
-  const row = await db
-    .prepare("SELECT value, expires_at FROM kv_cache WHERE key = ?1")
-    .bind(key)
-    .first<CacheRow>();
+  let row: CacheRow | null = null;
+  try {
+    row = await db
+      .prepare("SELECT value, expires_at FROM kv_cache WHERE key = ?1")
+      .bind(key)
+      .first<CacheRow>();
+  } catch (err) {
+    if (!isMissingTableError(err)) throw err;
+    await ensureCacheTable(db);
+    row = await db
+      .prepare("SELECT value, expires_at FROM kv_cache WHERE key = ?1")
+      .bind(key)
+      .first<CacheRow>();
+  }
 
   if (!row) return { hit: false };
   if (typeof row.expires_at !== "number" || row.expires_at <= now) return { hit: false };
@@ -35,17 +70,33 @@ export async function setCacheJson(
   const expiresAt = now + ttlSeconds;
   const json = JSON.stringify(value);
 
-  await db
-    .prepare(
-      "INSERT INTO kv_cache(key, value, updated_at, expires_at) VALUES (?1, ?2, ?3, ?4) " +
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
-    )
-    .bind(key, json, now, expiresAt)
-    .run();
+  try {
+    await db
+      .prepare(
+        "INSERT INTO kv_cache(key, value, updated_at, expires_at) VALUES (?1, ?2, ?3, ?4) " +
+          "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
+      )
+      .bind(key, json, now, expiresAt)
+      .run();
+  } catch (err) {
+    if (!isMissingTableError(err)) throw err;
+    await ensureCacheTable(db);
+    await db
+      .prepare(
+        "INSERT INTO kv_cache(key, value, updated_at, expires_at) VALUES (?1, ?2, ?3, ?4) " +
+          "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
+      )
+      .bind(key, json, now, expiresAt)
+      .run();
+  }
 }
 
 export async function purgeExpired(db: D1DatabaseLike): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
-  await db.prepare("DELETE FROM kv_cache WHERE expires_at <= ?1").bind(now).run();
+  try {
+    await db.prepare("DELETE FROM kv_cache WHERE expires_at <= ?1").bind(now).run();
+  } catch (err) {
+    if (!isMissingTableError(err)) throw err;
+    await ensureCacheTable(db);
+  }
 }
-
