@@ -64,6 +64,14 @@ const INFERNO_PULSE = {
   kind: 101,
 } as const;
 
+const STORM_ASSASIN = {
+  metadataCid: "bafkreiavecfbxphf3qejwyktvh5eosa7eveqghcft4sjcrfugrxqat6wbi",
+  imageCid: "bafybeie7ot5lpvbjkwpxnky4hzovbotim5266hsnyag7qff6ekxpeiqelm",
+  localImagePath: "/nfts/storm-assasin.png",
+  name: "StackUp: Storm Assasin",
+  kind: 102,
+} as const;
+
 type NftOverrideEntry = {
   name?: string;
   image?: string; // /public path or ipfs://...
@@ -136,6 +144,8 @@ export default function ClientPage() {
   >("idle");
   const [infernoFeeUstx, setInfernoFeeUstx] = useState<number | null>(null);
   const [infernoUri, setInfernoUri] = useState<string | null>(null);
+  const [stormFeeUstx, setStormFeeUstx] = useState<number | null>(null);
+  const [stormUri, setStormUri] = useState<string | null>(null);
   const [nftOverrides, setNftOverrides] = useState<NftOverrides>({
     byTokenId: {},
     byKind: {},
@@ -697,7 +707,13 @@ export default function ClientPage() {
       }
 
       try {
-        const [milestonesCV, infernoFeeCV, infernoUriCV] = await Promise.all([
+        const [
+          milestonesCV,
+          infernoFeeCV,
+          infernoUriCV,
+          stormFeeCV,
+          stormUriCV,
+        ] = await Promise.all([
           fetchCallReadOnlyFunction({
             contractAddress: CONTRACT_ADDRESS,
             contractName: CONTRACT_NAME,
@@ -719,6 +735,22 @@ export default function ClientPage() {
             contractName: CONTRACT_NAME,
             functionName: "get-badge-uri",
             functionArgs: [uintCV(INFERNO_PULSE.kind)],
+            network: STACKS_NETWORK_OBJ,
+            senderAddress: caller,
+          }),
+          fetchCallReadOnlyFunction({
+            contractAddress: CONTRACT_ADDRESS,
+            contractName: CONTRACT_NAME,
+            functionName: "get-mint-fee-kind",
+            functionArgs: [uintCV(STORM_ASSASIN.kind)],
+            network: STACKS_NETWORK_OBJ,
+            senderAddress: caller,
+          }),
+          fetchCallReadOnlyFunction({
+            contractAddress: CONTRACT_ADDRESS,
+            contractName: CONTRACT_NAME,
+            functionName: "get-badge-uri",
+            functionArgs: [uintCV(STORM_ASSASIN.kind)],
             network: STACKS_NETWORK_OBJ,
             senderAddress: caller,
           }),
@@ -749,6 +781,20 @@ export default function ClientPage() {
 
         const uriUnwrapped = unwrapCvToValue(cvToValue(infernoUriCV) as unknown);
         setInfernoUri(typeof uriUnwrapped === "string" ? uriUnwrapped : null);
+
+        const stormFeeUnwrapped = unwrapCvToValue(cvToValue(stormFeeCV) as unknown);
+        const stormFee =
+          stormFeeUnwrapped === null
+            ? null
+            : typeof stormFeeUnwrapped === "bigint"
+              ? Number(stormFeeUnwrapped)
+              : typeof stormFeeUnwrapped === "number"
+                ? stormFeeUnwrapped
+                : null;
+        setStormFeeUstx(stormFee);
+
+        const stormUriUnwrapped = unwrapCvToValue(cvToValue(stormUriCV) as unknown);
+        setStormUri(typeof stormUriUnwrapped === "string" ? stormUriUnwrapped : null);
 
         try {
           const kindsToLoad = BADGE_MILESTONES.map((m) => m.kind);
@@ -1138,6 +1184,45 @@ export default function ClientPage() {
     }
   };
 
+  const mintStormAssasin = async () => {
+    if (!address) {
+      setError("Connect wallet first.");
+      return;
+    }
+    if (stormFeeUstx === null) {
+      setError("Price not loaded yet. Click “Refresh On-Chain” and try again.");
+      return;
+    }
+
+    setError("");
+    setStatus("Minting Storm Assasin...");
+
+    try {
+      openContractCall({
+        contractAddress: CONTRACT_ADDRESS,
+        contractName: CONTRACT_NAME,
+        functionName: "mint-paid-kind",
+        functionArgs: [uintCV(STORM_ASSASIN.kind)],
+        // This call transfers STX as a mint fee. In Allow mode, the wallet
+        // doesn't require us to enumerate the exact STX movement as a post-condition.
+        postConditionMode: PostConditionMode.Allow,
+        network: STACKS_NETWORK_OBJ,
+        appDetails: {
+          name: APP_NAME,
+          icon: new URL(APP_ICON_PATH, window.location.origin).toString(),
+        },
+        onFinish: () => {
+          setStatus("Mint submitted");
+          scheduleRefresh(address);
+        },
+        onCancel: () => setStatus("Mint cancelled"),
+      });
+    } catch {
+      setError("Failed to open mint transaction.");
+      setStatus("Mint failed");
+    }
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.shell}>
@@ -1408,6 +1493,45 @@ export default function ClientPage() {
                     className={`${styles.button} ${styles.dropTileButton}`}
                     onClick={mintInfernoPulse}
                     disabled={!address || !infernoUri}
+                    type="button"
+                  >
+                    Mint
+                  </button>
+                </div>
+
+                <div className={styles.dropTile}>
+                  <div className={styles.dropTileThumb}>
+                    <Image
+                      src={STORM_ASSASIN.localImagePath}
+                      alt={STORM_ASSASIN.name}
+                      width={520}
+                      height={520}
+                      unoptimized
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "contain",
+                      }}
+                    />
+                  </div>
+                  <div className={styles.dropTileBody}>
+                    <div className={styles.dropTileTitle}>{STORM_ASSASIN.name}</div>
+                    <div className={styles.dropTileLine}>
+                      Kind <code>u{STORM_ASSASIN.kind}</code>
+                      {" · "}
+                      {stormFeeUstx === null
+                        ? "Price: —"
+                        : `Price: ${(stormFeeUstx / 1_000_000).toFixed(2)} STX`}
+                    </div>
+                    <div className={styles.dropTileLine}>
+                      Metadata:{" "}
+                      <span>{stormUri ? "Configured" : "Not configured"}</span>
+                    </div>
+                  </div>
+                  <button
+                    className={`${styles.button} ${styles.dropTileButton}`}
+                    onClick={mintStormAssasin}
+                    disabled={!address || !stormUri}
                     type="button"
                   >
                     Mint
