@@ -102,22 +102,59 @@ const ipfsToHttpsCandidates = (uri: string) => {
   ];
 };
 
-const unwrapCvToValue = (v: unknown): unknown => {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "string" || typeof v === "number" || typeof v === "bigint") {
-    return v;
-  }
+const unwrapCvToValue = (v: unknown): unknown => { 
+  if (v === null || v === undefined) return null; 
+  if (typeof v === "string" || typeof v === "number" || typeof v === "bigint") { 
+    return v; 
+  } 
+ 
+  if (typeof v === "object") { 
+    const obj = v as Record<string, unknown>; 
+ 
+    // Some cvToValue outputs wrap optionals/responses as { type, value } or { value }. 
+    if ("value" in obj) return unwrapCvToValue(obj.value); 
+    if ("data" in obj) return unwrapCvToValue(obj.data); 
 
-  if (typeof v === "object") {
-    const obj = v as Record<string, unknown>;
+    // json-compat output shape: { type: "...", value: "..." } / { type: "...", value: ... }
+    if ("type" in obj && typeof obj.type === "string") {
+      const t = obj.type;
+      const value = "value" in obj ? (obj as Record<string, unknown>).value : undefined;
 
-    // Some cvToValue outputs wrap optionals/responses as { type, value } or { value }.
-    if ("value" in obj) return unwrapCvToValue(obj.value);
-    if ("data" in obj) return unwrapCvToValue(obj.data);
-  }
+      if (t === "none") return null;
+      if (t === "some") return unwrapCvToValue(value);
+      if (t === "ok") return unwrapCvToValue(value);
+      if (t === "err") return unwrapCvToValue(value);
 
-  return null;
-};
+      if (t === "uint" || t === "int") {
+        if (typeof value === "bigint") return value;
+        if (typeof value === "number") return BigInt(value);
+        if (typeof value === "string") {
+          try {
+            return BigInt(value);
+          } catch {
+            return null;
+          }
+        }
+      }
+
+      if (
+        t === "string-ascii" ||
+        t === "string-utf8" ||
+        t === "principal" ||
+        t === "standard-principal" ||
+        t === "contract-principal"
+      ) {
+        return typeof value === "string" ? value : null;
+      }
+
+      if (t === "list") {
+        return Array.isArray(value) ? value.map(unwrapCvToValue) : null;
+      }
+    }
+  } 
+ 
+  return null; 
+}; 
 
 export default function ClientPage() {
   const [walletAddress, setWalletAddress] = useState<string>("");
@@ -655,18 +692,22 @@ export default function ClientPage() {
             }),
           ]);
 
-          const streakValue = cvToValue(streakCV) as unknown;
-          const lastDayValue = cvToValue(lastDayCV) as unknown;
-          setStreak(
-            typeof streakValue === "bigint"
-              ? Number(streakValue)
-              : (streakValue as number)
-          );
-          setLastClaimDay(
-            typeof lastDayValue === "bigint"
-              ? Number(lastDayValue)
-              : (lastDayValue as number)
-          );
+          const streakUnwrapped = unwrapCvToValue(cvToValue(streakCV) as unknown);
+          const lastDayUnwrapped = unwrapCvToValue(cvToValue(lastDayCV) as unknown);
+
+          const toNum = (x: unknown) =>
+            x === null || x === undefined
+              ? null
+              : typeof x === "bigint"
+                ? Number(x)
+                : typeof x === "number"
+                  ? x
+                  : typeof x === "string"
+                    ? Number(x)
+                    : null;
+
+          setStreak(toNum(streakUnwrapped));
+          setLastClaimDay(toNum(lastDayUnwrapped));
         } catch {
           // Don't block global config (fees, milestones) just because the connected wallet
           // is on a different network / has an address that doesn't match the contract network.
@@ -785,10 +826,15 @@ export default function ClientPage() {
           senderAddress: caller,
         });
 
-        const ms = cvToValue(milestonesCV) as unknown;
+        const ms = unwrapCvToValue(cvToValue(milestonesCV) as unknown);
         if (Array.isArray(ms)) {
           const parsed = ms
-            .map((v) => (typeof v === "bigint" ? Number(v) : Number(v)))
+            .map((v) => {
+              if (typeof v === "bigint") return Number(v);
+              if (typeof v === "number") return v;
+              if (typeof v === "string") return Number(v);
+              return NaN;
+            })
             .filter((v) => Number.isFinite(v) && v > 0);
           setMilestones(parsed);
           setAdminMilestones(parsed.join(","));
