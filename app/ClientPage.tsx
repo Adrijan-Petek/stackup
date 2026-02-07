@@ -230,6 +230,16 @@ export default function ClientPage() {
       ? "https://api.mainnet.hiro.so"
       : "https://api.testnet.hiro.so";
 
+  const stacksCoreApiBaseUrl =
+    typeof STACKS_NETWORK_OBJ === "object" &&
+    STACKS_NETWORK_OBJ !== null &&
+    "client" in STACKS_NETWORK_OBJ &&
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    typeof (STACKS_NETWORK_OBJ as any).client?.baseUrl === "string"
+      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ((STACKS_NETWORK_OBJ as any).client.baseUrl as string)
+      : stacksApiBase;
+
   const getOverrideForToken = useCallback(
     (tokenId: number, kind: number | null) => {
       const byToken = nftOverrides.byTokenId[String(tokenId)];
@@ -604,6 +614,21 @@ export default function ClientPage() {
     const sender = senderOverride || address || caller;
 
     try {
+      // Quick connectivity check (avoids opaque "Failed to fetch" errors).
+      try {
+        const controller = new AbortController();
+        const t = window.setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(`${stacksCoreApiBaseUrl}/v2/info`, {
+          signal: controller.signal,
+        });
+        window.clearTimeout(t);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } catch {
+        throw new Error(
+          `Cannot reach Stacks API (${STACKS_NETWORK}). Check your connection and disable adblock/firewall for ${stacksCoreApiBaseUrl}.`
+        );
+      }
+
       const [streakCV, lastDayCV] = await Promise.all([
         fetchCallReadOnlyFunction({
           contractAddress: CONTRACT_ADDRESS,
@@ -842,8 +867,9 @@ export default function ClientPage() {
 
       // Common foot-gun: wallet on testnet while app is set to mainnet (or vice-versa).
       const networkHint =
-        (STACKS_NETWORK === "mainnet" && sender.startsWith("ST")) ||
-        (STACKS_NETWORK === "testnet" && sender.startsWith("SP"))
+        walletAddress &&
+        ((STACKS_NETWORK === "mainnet" && walletAddress.startsWith("ST")) ||
+          (STACKS_NETWORK === "testnet" && walletAddress.startsWith("SP")))
           ? " (Wallet/network mismatch: switch Leather network to match the app.)"
           : "";
 
@@ -851,7 +877,7 @@ export default function ClientPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [address, loadOwnedCollectibles]);
+  }, [address, loadOwnedCollectibles, stacksCoreApiBaseUrl, walletAddress]);
 
   const scheduleRefresh = useCallback(
     (senderOverride?: string) => {
