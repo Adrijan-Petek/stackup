@@ -223,23 +223,16 @@ export default function ClientPage() {
     [nftOverrides]
   );
 
-  const resolveLocalNftImage = useCallback(async (tokenId: number, kind: number | null) => {
-    const candidates: string[] = [];
-    if (kind !== null) candidates.push(`/nfts/kind-${kind}.png`);
-    candidates.push(`/nfts/token-${tokenId}.png`);
-    // legacy/manual naming pattern (common during early drops)
-    candidates.push(`/nfts/${tokenId}.png`);
-
-    for (const path of candidates) {
-      try {
-        const res = await fetch(path, { method: "HEAD" });
-        if (res.ok) return path;
-      } catch {
-        // ignore
-      }
-    }
-    return null;
-  }, []);
+  const resolveLocalNftImage = useCallback(
+    async (_tokenId: number, kind: number | null) => {
+      // Avoid probing for unknown local files (causes noisy 404s in the console).
+      // Only return known bundled assets.
+      if (kind === INFERNO_PULSE.kind) return INFERNO_PULSE.localImagePath;
+      if (kind === STORM_ASSASIN.kind) return STORM_ASSASIN.localImagePath;
+      return null;
+    },
+    []
+  );
 
   type CollectibleTokenInfo = {
     tokenId: number;
