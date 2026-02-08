@@ -131,6 +131,11 @@ export default function ClientPage() {
   const [infernoUri, setInfernoUri] = useState<string | null>(null);
   const [stormFeeUstx, setStormFeeUstx] = useState<number | null>(null);
   const [stormUri, setStormUri] = useState<string | null>(null);
+  const [featuredDrops, setFeaturedDrops] = useState<{
+    inferno: OwnedCollectible | null;
+    storm: OwnedCollectible | null;
+  }>({ inferno: null, storm: null });
+  const [didAutoForceRefresh, setDidAutoForceRefresh] = useState<boolean>(false);
   const [nftOverrides, setNftOverrides] = useState<NftOverrides>({
     byTokenId: {},
     byKind: {},
@@ -245,13 +250,67 @@ export default function ClientPage() {
       setCollectiblesStatus("loading");
       try {
         if (tokenInfo.length === 0) {
+          setFeaturedDrops({ inferno: null, storm: null });
           setCollectibles([]);
           setCollectiblesStatus("loaded");
           return;
         }
 
+        // Feature the two paid drops so they don't show up twice (once as a drop tile, once in the owned list).
+        const infernoOwnedRaw = tokenInfo
+          .filter(
+            (t) =>
+              t.kind === INFERNO_PULSE.kind ||
+              (t.metadataUri?.endsWith(INFERNO_PULSE.metadataCid) ?? false)
+          )
+          .sort((a, b) => b.tokenId - a.tokenId)[0];
+        const stormOwnedRaw = tokenInfo
+          .filter(
+            (t) =>
+              t.kind === STORM_ASSASIN.kind ||
+              (t.metadataUri?.endsWith(STORM_ASSASIN.metadataCid) ?? false)
+          )
+          .sort((a, b) => b.tokenId - a.tokenId)[0];
+
+        setFeaturedDrops({
+          inferno: infernoOwnedRaw
+            ? {
+                tokenId: infernoOwnedRaw.tokenId,
+                kind: infernoOwnedRaw.kind,
+                name: INFERNO_PULSE.name,
+                imageUrl: INFERNO_PULSE.localImagePath,
+                metadataUri: infernoOwnedRaw.metadataUri,
+              }
+            : null,
+          storm: stormOwnedRaw
+            ? {
+                tokenId: stormOwnedRaw.tokenId,
+                kind: stormOwnedRaw.kind,
+                name: STORM_ASSASIN.name,
+                imageUrl: STORM_ASSASIN.localImagePath,
+                metadataUri: stormOwnedRaw.metadataUri,
+              }
+            : null,
+        });
+
+        const remaining = tokenInfo.filter((t) => {
+          if (
+            t.kind === INFERNO_PULSE.kind ||
+            (t.metadataUri?.endsWith(INFERNO_PULSE.metadataCid) ?? false)
+          ) {
+            return false;
+          }
+          if (
+            t.kind === STORM_ASSASIN.kind ||
+            (t.metadataUri?.endsWith(STORM_ASSASIN.metadataCid) ?? false)
+          ) {
+            return false;
+          }
+          return true;
+        });
+
         const collectibleItems: OwnedCollectible[] = [];
-        for (const info of tokenInfo) {
+        for (const info of remaining) {
           const override = getOverrideForToken(info.tokenId, info.kind);
 
           let name =
@@ -312,6 +371,7 @@ export default function ClientPage() {
         setCollectibles(collectibleItems);
         setCollectiblesStatus("loaded");
       } catch {
+        setFeaturedDrops({ inferno: null, storm: null });
         setCollectibles([]);
         setCollectiblesStatus("error");
       }
@@ -443,17 +503,34 @@ export default function ClientPage() {
         if (sender) {
           await hydrateCollectiblesFromTokenInfo(d.collectiblesTokenInfo ?? []);
         } else {
+          setFeaturedDrops({ inferno: null, storm: null });
           setCollectibles([]);
           setCollectiblesStatus("idle");
         }
 
-        setStatus(parsed.cached ? "On-chain data loaded" : "On-chain data updated");
+        const cached = Boolean(parsed.cached);
+        setStatus(cached ? "On-chain data loaded" : "On-chain data updated");
+
+        // Self-heal if we ever cached an incomplete snapshot (e.g. temporary upstream failures).
+        const looksIncomplete =
+          (d.infernoFeeUstx === null &&
+            d.stormFeeUstx === null &&
+            !Array.isArray(d.milestones)) ||
+          (sender && d.streak === null);
+        if (cached && looksIncomplete && !didAutoForceRefresh) {
+          setDidAutoForceRefresh(true);
+          setTimeout(() => {
+            fetchOnChain(sender || undefined, { force: true }).catch(() => {
+              // ignore
+            });
+          }, 250);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
         setError(`Failed to load on-chain data: ${message}`);
       }
     },
-    [hydrateCollectiblesFromTokenInfo, walletAddress]
+    [didAutoForceRefresh, hydrateCollectiblesFromTokenInfo, walletAddress]
   );
 
   const scheduleRefresh = useCallback(
@@ -944,6 +1021,11 @@ export default function ClientPage() {
               Status: <span>{status}</span>
             </div>
             {error ? <div className={styles.danger}>{error}</div> : null}
+            {!address ? (
+              <div className={styles.footnote}>
+                Connect your wallet to see your streak and last claim day.
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -1089,14 +1171,19 @@ export default function ClientPage() {
                       Metadata:{" "}
                       <span>{infernoUri ? "Configured" : "Not configured"}</span>
                     </div>
+                    {featuredDrops.inferno ? (
+                      <div className={styles.dropTileLine}>
+                        Owned: <code>#{featuredDrops.inferno.tokenId}</code>
+                      </div>
+                    ) : null}
                   </div>
                   <button
                     className={`${styles.button} ${styles.dropTileButton}`}
                     onClick={mintInfernoPulse}
-                    disabled={!address || !infernoUri}
+                    disabled={!address || !infernoUri || Boolean(featuredDrops.inferno)}
                     type="button"
                   >
-                    Mint
+                    {featuredDrops.inferno ? "Owned" : "Mint"}
                   </button>
                 </div>
 
@@ -1128,14 +1215,19 @@ export default function ClientPage() {
                       Metadata:{" "}
                       <span>{stormUri ? "Configured" : "Not configured"}</span>
                     </div>
+                    {featuredDrops.storm ? (
+                      <div className={styles.dropTileLine}>
+                        Owned: <code>#{featuredDrops.storm.tokenId}</code>
+                      </div>
+                    ) : null}
                   </div>
                   <button
                     className={`${styles.button} ${styles.dropTileButton}`}
                     onClick={mintStormAssasin}
-                    disabled={!address || !stormUri}
+                    disabled={!address || !stormUri || Boolean(featuredDrops.storm)}
                     type="button"
                   >
-                    Mint
+                    {featuredDrops.storm ? "Owned" : "Mint"}
                   </button>
                 </div>
               </div>
@@ -1161,9 +1253,9 @@ export default function ClientPage() {
                 </div>
               ) : collectibles.length === 0 ? (
                 <div className={styles.emptyState}>
-                  <div className={styles.emptyTitle}>No NFTs yet.</div>
+                  <div className={styles.emptyTitle}>No other NFTs yet.</div>
                   <div className={styles.emptyBody}>
-                    When you mint paid collectibles, they’ll appear here.
+                    When you mint or receive more collectibles, they’ll appear here.
                   </div>
                 </div>
               ) : (
