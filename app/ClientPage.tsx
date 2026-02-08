@@ -1226,7 +1226,7 @@ export default function ClientPage() {
                   <button
                     className={`${styles.button} ${styles.dropTileButton}`}
                     onClick={mintInfernoPulse}
-                    disabled={!address || !infernoUri || Boolean(featuredDrops.inferno)}
+                    disabled={!address || infernoFeeUstx === null || Boolean(featuredDrops.inferno)}
                     type="button"
                   >
                     {featuredDrops.inferno ? "Owned" : "Mint"}
@@ -1274,7 +1274,7 @@ export default function ClientPage() {
                   <button
                     className={`${styles.button} ${styles.dropTileButton}`}
                     onClick={mintStormAssasin}
-                    disabled={!address || !stormUri || Boolean(featuredDrops.storm)}
+                    disabled={!address || stormFeeUstx === null || Boolean(featuredDrops.storm)}
                     type="button"
                   >
                     {featuredDrops.storm ? "Owned" : "Mint"}
